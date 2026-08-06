@@ -5,11 +5,10 @@ import UserNotifications
 ///
 /// `UNUserNotificationCenter.current()` throws an uncaught `NSException` (not a
 /// catchable Swift error) when the process has no bundle identifier — which is the
-/// case when running via `swift run` from the terminal rather than a signed `.app`
-/// bundle. We detect that up front and skip native banners entirely in that mode;
-/// notifications remain visible in the in-app popover list regardless. This whole
-/// guard goes away once the Polish-phase packaging work wraps the executable in a
-/// proper `.app` bundle.
+/// case when running the raw executable (`swift run`, or Xcode's Run button on the
+/// package target) instead of through `Scripts/run.sh`'s `.app` bundle. We detect
+/// that up front and skip native banners entirely in that mode; notifications remain
+/// visible in the in-app popover list regardless.
 enum LocalNotifier {
     private static let isRunningInAppBundle = Bundle.main.bundleIdentifier != nil
 

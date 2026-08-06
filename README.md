@@ -24,10 +24,10 @@ Requires Xcode 16 / Swift 6 toolchain, macOS 14+.
 
 ```bash
 cd mac-app
-swift run
+Scripts/run.sh
 ```
 
-This runs the menu-bar app from the terminal for development. Native notification banners (`UserNotifications`) require the app to run as a signed `.app` bundle to register with the system — that packaging step is planned for the Polish phase. Until then, incoming notifications are visible in the in-app popover list.
+**Don't use `swift run` or Xcode's Run button directly** — a bare, bundle-less executable gets registered by Launch Services as `BackgroundOnly`, which means `MenuBarExtra` never gets a real WindowServer session and its status item silently never appears (no crash, no error — it just doesn't show up). `Scripts/run.sh` builds the executable, wraps it in a minimal ad-hoc signed `LinkToMac.app` (with a real bundle identifier and `LSUIElement` set so there's no Dock icon), and opens that instead. This also makes native notification banners work, since `UserNotifications` has the same bundle-identity requirement. Pass `release` as an argument for a release build (`Scripts/run.sh release`).
 
 ## Android app
 
