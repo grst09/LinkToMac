@@ -8,8 +8,7 @@ struct LinkToMacApp: App {
     init() {
         let identity = IdentityStore()
         let pairedDeviceStore = PairedDeviceStore()
-        let notificationStore = NotificationStore()
-        let server = ConnectionServer(identity: identity, pairedDeviceStore: pairedDeviceStore, notificationStore: notificationStore)
+        let server = ConnectionServer(identity: identity, pairedDeviceStore: pairedDeviceStore)
         _server = State(initialValue: server)
         AppDelegate.server = server
     }

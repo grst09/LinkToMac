@@ -33,17 +33,15 @@ final class ConnectionServer {
 
     private let identity: IdentityStore
     private let pairedDeviceStore: PairedDeviceStore
-    let notificationStore: NotificationStore
 
     private var listener: NWListener?
     private var activeConnection: NWConnection?
     private var sessionKey: SymmetricKey?
     private var activePairingToken: Data?
 
-    init(identity: IdentityStore, pairedDeviceStore: PairedDeviceStore, notificationStore: NotificationStore) {
+    init(identity: IdentityStore, pairedDeviceStore: PairedDeviceStore) {
         self.identity = identity
         self.pairedDeviceStore = pairedDeviceStore
-        self.notificationStore = notificationStore
     }
 
     func start() {
@@ -216,10 +214,10 @@ final class ConnectionServer {
         switch message.type {
         case "notification.posted":
             let payload = try message.payload.decoded(as: NotificationPostedPayload.self)
-            notificationStore.add(payload)
+            LocalNotifier.post(payload)
         case "notification.removed":
             let payload = try message.payload.decoded(as: NotificationRemovedPayload.self)
-            notificationStore.remove(id: payload.id)
+            LocalNotifier.remove(id: payload.id)
         case "ping":
             try send(type: "pong", payload: EmptyPayload(), on: connection)
         default:
@@ -228,12 +226,6 @@ final class ConnectionServer {
     }
 
     // MARK: - Sending
-
-    /// Call when the user dismisses a notification on the Mac, to mirror the dismissal back to the phone.
-    func sendDismiss(id: String) {
-        guard let connection = activeConnection else { return }
-        try? send(type: "notification.dismiss", payload: NotificationRemovedPayload(id: id), on: connection)
-    }
 
     private func send<T: Encodable>(type: String, payload: T, on connection: NWConnection) throws {
         guard let key = sessionKey else { return }

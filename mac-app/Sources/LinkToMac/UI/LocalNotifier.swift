@@ -1,14 +1,14 @@
 import Foundation
 import UserNotifications
 
-/// Posts mirrored notifications as native macOS banners.
+/// Posts mirrored notifications as native macOS banners — the only place mirrored
+/// notifications show up; the menu bar popover only shows connection status.
 ///
 /// `UNUserNotificationCenter.current()` throws an uncaught `NSException` (not a
 /// catchable Swift error) when the process has no bundle identifier — which is the
 /// case when running the raw executable (`swift run`, or Xcode's Run button on the
 /// package target) instead of through `Scripts/run.sh`'s `.app` bundle. We detect
-/// that up front and skip native banners entirely in that mode; notifications remain
-/// visible in the in-app popover list regardless.
+/// that up front and skip native banners entirely in that mode.
 enum LocalNotifier {
     private static let isRunningInAppBundle = Bundle.main.bundleIdentifier != nil
 
@@ -38,5 +38,12 @@ enum LocalNotifier {
                 print("LinkToMac: failed to post notification: \(error)")
             }
         }
+    }
+
+    /// Clears the delivered banner/Notification Center entry when the phone reports the
+    /// underlying notification was dismissed there, keeping the two sides in sync.
+    static func remove(id: String) {
+        guard isRunningInAppBundle else { return }
+        UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
     }
 }

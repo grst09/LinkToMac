@@ -10,10 +10,6 @@ struct MenuBarView: View {
             switch server.state {
             case .connected(let deviceName):
                 connectedHeader(deviceName)
-                NotificationListView(
-                    notifications: server.notificationStore.notifications,
-                    onDismiss: { server.sendDismiss(id: $0) }
-                )
             case .failed(let message):
                 Text(message)
                     .font(.caption)
