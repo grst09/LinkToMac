@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -18,11 +19,15 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.layout.Spacer
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.linktomac.net.ConnectionState
+import com.linktomac.service.SyncForegroundService
+import kotlinx.coroutines.delay
 
 @Composable
 fun PairingScreen(
@@ -32,9 +37,16 @@ fun PairingScreen(
     onStartService: () -> Unit
 ) {
     var notificationAccessGranted by remember { mutableStateOf(isNotificationAccessGranted()) }
+    var connectionState by remember { mutableStateOf<ConnectionState>(ConnectionState.Idle) }
 
     LaunchedEffect(Unit) {
         onStartService()
+        // The foreground service's onCreate() runs asynchronously after startForegroundService()
+        // returns, so its connection StateFlow isn't available on the same frame.
+        while (SyncForegroundService.connectionState() == null) {
+            delay(50)
+        }
+        SyncForegroundService.connectionState()?.collect { connectionState = it }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -79,8 +91,35 @@ fun PairingScreen(
             Spacer(Modifier.height(16.dp))
         }
 
-        Button(onClick = onScanRequested) {
-            Text("Scan Pairing Code")
+        when (val state = connectionState) {
+            is ConnectionState.Connected -> {
+                Text(
+                    "Connected to ${state.macDeviceName}",
+                    style = MaterialTheme.typography.titleMedium,
+                    color = Color(0xFF2E7D32)
+                )
+            }
+            ConnectionState.Connecting -> {
+                CircularProgressIndicator()
+                Spacer(Modifier.height(12.dp))
+                Text("Connecting…", style = MaterialTheme.typography.bodyMedium)
+            }
+            is ConnectionState.Failed -> {
+                Text(
+                    "Couldn't pair: ${state.message}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = Color(0xFFC62828)
+                )
+                Spacer(Modifier.height(12.dp))
+                Button(onClick = onScanRequested) {
+                    Text("Try Again")
+                }
+            }
+            ConnectionState.Idle -> {
+                Button(onClick = onScanRequested) {
+                    Text("Scan Pairing Code")
+                }
+            }
         }
     }
 }

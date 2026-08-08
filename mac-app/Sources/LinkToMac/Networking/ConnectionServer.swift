@@ -3,10 +3,13 @@ import Network
 import CryptoKit
 import Observation
 
+/// Deliberately minimal: the Mac's public key is *not* included here. Cramming a 65-byte
+/// P-256 point into the QR (on top of the token and device id) pushed the payload past ~247
+/// bytes, forcing a dense ~77x77-module QR code that phones struggled to scan reliably. The
+/// public key now travels over the socket instead, via `serverHello` — see docs/PROTOCOL.md.
 struct PairingQRPayload: Codable {
     let host: String
     let port: UInt16
-    let macPublicKey: String
     let pairingToken: String
     let macDeviceId: String
 }
@@ -85,7 +88,6 @@ final class ConnectionServer {
         let payload = PairingQRPayload(
             host: LocalNetwork.primaryIPv4Address() ?? "0.0.0.0",
             port: Self.port,
-            macPublicKey: identity.publicKeyBase64,
             pairingToken: tokenBytes.base64EncodedString(),
             macDeviceId: identity.deviceId
         )
@@ -102,15 +104,29 @@ final class ConnectionServer {
         sessionKey = nil
 
         connection.stateUpdateHandler = { [weak self] newState in
+            guard let self else { return }
             switch newState {
+            case .ready:
+                self.sendServerHello(on: connection)
+                self.receiveNext(on: connection)
             case .failed, .cancelled:
-                self?.handleDisconnect()
+                self.handleDisconnect()
             default:
                 break
             }
         }
         connection.start(queue: .main)
-        receiveNext(on: connection)
+    }
+
+    private func sendServerHello(on connection: NWConnection) {
+        let payload = ServerHelloPayload(
+            macPublicKey: identity.publicKeyBase64,
+            macDeviceId: identity.deviceId,
+            macDeviceName: Host.current().localizedName ?? "Mac"
+        )
+        guard let message = try? Message(type: "serverHello", payload: JSONValue.from(payload)),
+              let data = try? JSONEncoder().encode(message) else { return }
+        sendRaw(data, on: connection)
     }
 
     private func handleDisconnect() {

@@ -32,6 +32,19 @@ data class HelloAckPayload(
     val macDeviceName: String
 )
 
+/**
+ * Sent unencrypted, immediately on every new connection (both first pairing and reconnect),
+ * so the Mac's public key never has to be crammed into the pairing QR code — see
+ * docs/PROTOCOL.md. Trust is established by the pairing token (first pairing, human-verified
+ * via the QR scan) or by pinning against the previously learned key (reconnect).
+ */
+@Serializable
+data class ServerHelloPayload(
+    val macPublicKey: String,
+    val macDeviceId: String,
+    val macDeviceName: String
+)
+
 @Serializable
 data class NotificationAction(
     val title: String,
@@ -60,7 +73,6 @@ data class NotificationRemovedPayload(
 data class PairingQrPayload(
     val host: String,
     val port: Int,
-    val macPublicKey: String,
     val pairingToken: String,
     val macDeviceId: String
 )

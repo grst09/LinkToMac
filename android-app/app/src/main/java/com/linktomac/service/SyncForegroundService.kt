@@ -154,6 +154,8 @@ class SyncForegroundService : Service() {
         var instance: SyncForegroundService? = null
             private set
 
+        fun connectionState(): kotlinx.coroutines.flow.StateFlow<ConnectionState>? = instance?.connection?.state
+
         fun start(context: Context) {
             context.startForegroundService(Intent(context, SyncForegroundService::class.java))
         }

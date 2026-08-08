@@ -29,6 +29,16 @@ struct HelloAckPayload: Codable {
     let macDeviceName: String
 }
 
+/// Sent unencrypted, immediately on every new connection (both first pairing and reconnect),
+/// so the Mac's public key never has to be crammed into the pairing QR code — see
+/// docs/PROTOCOL.md. Trust is established by the pairing token (first pairing, human-verified
+/// via the QR scan) or by pinning against the previously learned key (reconnect).
+struct ServerHelloPayload: Codable {
+    let macPublicKey: String
+    let macDeviceId: String
+    let macDeviceName: String
+}
+
 // MARK: - Notification payloads
 
 struct NotificationAction: Codable {

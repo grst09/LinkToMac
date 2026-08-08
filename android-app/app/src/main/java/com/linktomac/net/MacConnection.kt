@@ -26,24 +26,31 @@ sealed interface ConnectionState {
 }
 
 private data class PendingHandshake(
-    val macDeviceId: String,
-    val macPublicKey: String,
+    val expectedMacDeviceId: String,
+    /** Null for a first pairing (trust-on-first-use, verified by the human scanning the QR);
+     *  set for a reconnect, pinning against the identity learned during original pairing. */
+    val expectedMacPublicKey: String?,
     val saltBase64: String,
+    val pairingTokenToSend: String?,
     val isNewPairing: Boolean
 )
 
 /**
  * Owns the WebSocket connection to the Mac app: performs the handshake described in
- * docs/PROTOCOL.md (deriving the session key before the socket even opens, since it only
- * depends on our own fresh ephemeral key and the Mac's already-known public key), then
- * encrypts/decrypts every message after that.
+ * docs/PROTOCOL.md. The session key can't be derived until the Mac's `serverHello` arrives
+ * (its public key travels over the socket, not the QR — see PairingQrPayload), so `hello` is
+ * sent only after that; everything after is encrypted.
  */
 class MacConnection(
     private val deviceId: String,
     private val deviceName: String,
     private val pairedDeviceStore: PairedDeviceStore
 ) {
-    private val json = Json { ignoreUnknownKeys = true }
+    // encodeDefaults = true: Swift's Codable requires non-optional fields to be present in the
+    // JSON, but kotlinx.serialization silently omits fields that equal their Kotlin default
+    // (e.g. protocolVersion, actions = emptyList()) unless told otherwise — that mismatch would
+    // otherwise break decoding on the Mac side.
+    private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val client = OkHttpClient()
     private var webSocket: WebSocket? = null
     private var sessionKey: SecretKeySpec? = null
@@ -60,8 +67,8 @@ class MacConnection(
         connect(
             host = payload.host,
             port = payload.port,
-            macDeviceId = payload.macDeviceId,
-            macPublicKey = payload.macPublicKey,
+            expectedMacDeviceId = payload.macDeviceId,
+            expectedMacPublicKey = null,
             saltBase64 = payload.pairingToken,
             pairingTokenToSend = payload.pairingToken,
             isNewPairing = true
@@ -71,13 +78,13 @@ class MacConnection(
     /** Connect to a Mac discovered via Bonjour/NSD, using previously stored pairing state. */
     fun connectForReconnect(discovered: DiscoveredMac) {
         val macDeviceId = discovered.macDeviceId ?: pairedDeviceStore.macDeviceId ?: return
-        val macPublicKey = discovered.macPublicKey ?: pairedDeviceStore.macPublicKey ?: return
+        val macPublicKey = pairedDeviceStore.macPublicKey ?: return
         val salt = pairedDeviceStore.pairingSalt ?: return
         connect(
             host = discovered.host,
             port = discovered.port,
-            macDeviceId = macDeviceId,
-            macPublicKey = macPublicKey,
+            expectedMacDeviceId = macDeviceId,
+            expectedMacPublicKey = macPublicKey,
             saltBase64 = salt,
             pairingTokenToSend = null,
             isNewPairing = false
@@ -87,38 +94,25 @@ class MacConnection(
     private fun connect(
         host: String,
         port: Int,
-        macDeviceId: String,
-        macPublicKey: String,
+        expectedMacDeviceId: String,
+        expectedMacPublicKey: String?,
         saltBase64: String,
         pairingTokenToSend: String?,
         isNewPairing: Boolean
     ) {
         _state.value = ConnectionState.Connecting
-        val keyPair = SecureChannel.generateKeyPair()
-        ephemeralKeyPair = keyPair
-        pending = PendingHandshake(macDeviceId, macPublicKey, saltBase64, isNewPairing)
-        sessionKey = SecureChannel.deriveSessionKey(
-            keyPair.privateKey,
-            macPublicKey,
-            Base64.decode(saltBase64, Base64.NO_WRAP)
-        )
+        ephemeralKeyPair = SecureChannel.generateKeyPair()
+        sessionKey = null
+        pending = PendingHandshake(expectedMacDeviceId, expectedMacPublicKey, saltBase64, pairingTokenToSend, isNewPairing)
 
         val request = Request.Builder().url("ws://$host:$port/").build()
-        webSocket = client.newWebSocket(request, Listener(pairingTokenToSend))
+        webSocket = client.newWebSocket(request, Listener())
     }
 
-    private inner class Listener(private val pairingTokenToSend: String?) : WebSocketListener() {
+    private inner class Listener : WebSocketListener() {
         override fun onOpen(webSocket: WebSocket, response: Response) {
-            val keyPair = ephemeralKeyPair ?: return
-            val hello = HelloPayload(
-                androidPublicKey = keyPair.publicKeyBase64,
-                pairingToken = pairingTokenToSend,
-                deviceToken = if (pairingTokenToSend == null) pairedDeviceStore.deviceToken else null,
-                deviceId = deviceId,
-                deviceName = deviceName
-            )
-            val envelope = Envelope(type = "hello", payload = json.encodeToJsonElement(hello))
-            webSocket.send(json.encodeToString(envelope))
+            // Nothing to send yet — we wait for the Mac's serverHello, which carries the
+            // public key we need before we can derive a session key or send our own hello.
         }
 
         override fun onMessage(webSocket: WebSocket, text: String) = handleIncoming(text)
@@ -134,6 +128,10 @@ class MacConnection(
     }
 
     private fun handleIncoming(text: String) {
+        if (sessionKey == null) {
+            handleServerHello(text)
+            return
+        }
         val key = sessionKey ?: return
         try {
             val frame = json.decodeFromString<EncryptedFrame>(text)
@@ -152,16 +150,59 @@ class MacConnection(
         }
     }
 
+    private fun handleServerHello(text: String) {
+        val ctx = pending ?: return
+        try {
+            val envelope = json.decodeFromString<Envelope>(text)
+            if (envelope.type != "serverHello") return
+            val serverHello = json.decodeFromJsonElement<ServerHelloPayload>(envelope.payload)
+
+            if (serverHello.macDeviceId != ctx.expectedMacDeviceId) {
+                Log.e("MacConnection", "Unexpected Mac device id")
+                _state.value = ConnectionState.Failed("Unexpected Mac identity")
+                webSocket?.close(1000, "identity mismatch")
+                return
+            }
+            if (ctx.expectedMacPublicKey != null && ctx.expectedMacPublicKey != serverHello.macPublicKey) {
+                Log.e("MacConnection", "Mac public key changed since last pairing")
+                _state.value = ConnectionState.Failed("Mac identity changed — re-pair required")
+                webSocket?.close(1000, "identity mismatch")
+                return
+            }
+
+            val keyPair = ephemeralKeyPair ?: return
+            sessionKey = SecureChannel.deriveSessionKey(
+                keyPair.privateKey,
+                serverHello.macPublicKey,
+                Base64.decode(ctx.saltBase64, Base64.NO_WRAP)
+            )
+            pending = ctx.copy(expectedMacPublicKey = serverHello.macPublicKey)
+
+            val hello = HelloPayload(
+                androidPublicKey = keyPair.publicKeyBase64,
+                pairingToken = ctx.pairingTokenToSend,
+                deviceToken = if (ctx.pairingTokenToSend == null) pairedDeviceStore.deviceToken else null,
+                deviceId = deviceId,
+                deviceName = deviceName
+            )
+            val helloEnvelope = Envelope(type = "hello", payload = json.encodeToJsonElement(hello))
+            webSocket?.send(json.encodeToString(helloEnvelope))
+        } catch (e: Exception) {
+            Log.e("MacConnection", "Failed to handle serverHello", e)
+            _state.value = ConnectionState.Failed(e.message ?: "handshake failed")
+        }
+    }
+
     private fun handleHelloAck(ack: HelloAckPayload) {
         if (ack.status != "paired") {
             _state.value = ConnectionState.Failed("Pairing rejected")
             return
         }
         val ctx = pending
-        if (ctx != null && ctx.isNewPairing && ack.deviceToken != null) {
+        if (ctx != null && ctx.isNewPairing && ack.deviceToken != null && ctx.expectedMacPublicKey != null) {
             pairedDeviceStore.savePairing(
-                macDeviceId = ctx.macDeviceId,
-                macPublicKey = ctx.macPublicKey,
+                macDeviceId = ctx.expectedMacDeviceId,
+                macPublicKey = ctx.expectedMacPublicKey,
                 deviceToken = ack.deviceToken,
                 pairingSalt = ctx.saltBase64
             )

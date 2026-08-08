@@ -11,8 +11,7 @@ import kotlinx.coroutines.flow.callbackFlow
 data class DiscoveredMac(
     val host: String,
     val port: Int,
-    val macDeviceId: String?,
-    val macPublicKey: String?
+    val macDeviceId: String?
 )
 
 private const val SERVICE_TYPE = "_linktomac._tcp"
@@ -33,9 +32,8 @@ class MacDiscovery(private val context: Context) {
             override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                 val attrs = serviceInfo.attributes
                 val macDeviceId = attrs["id"]?.let { String(it, Charsets.UTF_8) }
-                val macPublicKey = attrs["pk"]?.let { String(it, Charsets.UTF_8) }
                 val host = serviceInfo.host?.hostAddress ?: return
-                trySend(DiscoveredMac(host, serviceInfo.port, macDeviceId, macPublicKey))
+                trySend(DiscoveredMac(host, serviceInfo.port, macDeviceId))
             }
         }
 
