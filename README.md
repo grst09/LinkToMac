@@ -6,7 +6,7 @@ Android-only by design: iOS does not expose the APIs (notification mirroring, ca
 
 ## Status
 
-**Phase 1 in progress:** device pairing, LAN discovery, an encrypted session channel, and notification mirroring (Android → Mac).
+**Phase 1 complete and verified end-to-end on real hardware:** device pairing, LAN discovery/reconnect, an encrypted session channel, and notification mirroring (Android → Mac). Next up: Phase 2 (call logs + messages).
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full roadmap and [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the wire protocol.
 
