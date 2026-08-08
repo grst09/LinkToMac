@@ -2,6 +2,7 @@ import SwiftUI
 
 @main
 struct LinkToMacApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     @State private var server: ConnectionServer
 
     init() {
@@ -10,8 +11,7 @@ struct LinkToMacApp: App {
         let notificationStore = NotificationStore()
         let server = ConnectionServer(identity: identity, pairedDeviceStore: pairedDeviceStore, notificationStore: notificationStore)
         _server = State(initialValue: server)
-        LocalNotifier.requestAuthorization()
-        server.start()
+        AppDelegate.server = server
     }
 
     var body: some Scene {
@@ -19,5 +19,19 @@ struct LinkToMacApp: App {
             MenuBarView(server: server)
         }
         .menuBarExtraStyle(.window)
+    }
+}
+
+/// `requestAuthorization` and `server.start()` need to run after the app has actually
+/// finished launching — calling them from `App.init()` is too early for
+/// `UNUserNotificationCenter` to hand off to the system permission prompt reliably
+/// (observed: the completion handler never fired at all when called from init()).
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    static var server: ConnectionServer?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        LocalNotifier.requestAuthorization()
+        Self.server?.start()
     }
 }

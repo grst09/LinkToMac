@@ -17,7 +17,13 @@ enum LocalNotifier {
             print("LinkToMac: not running from an app bundle — native notification banners disabled, use the in-app list instead.")
             return
         }
-        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { granted, error in
+            if let error {
+                print("LinkToMac: notification authorization request failed: \(error)")
+            } else {
+                print("LinkToMac: notification authorization granted=\(granted)")
+            }
+        }
     }
 
     static func post(_ notification: NotificationPostedPayload) {
@@ -27,6 +33,10 @@ enum LocalNotifier {
         content.subtitle = notification.appName
         content.body = notification.text
         let request = UNNotificationRequest(identifier: notification.id, content: content, trigger: nil)
-        UNUserNotificationCenter.current().add(request)
+        UNUserNotificationCenter.current().add(request) { error in
+            if let error {
+                print("LinkToMac: failed to post notification: \(error)")
+            }
+        }
     }
 }
