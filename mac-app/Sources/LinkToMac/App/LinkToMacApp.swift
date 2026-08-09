@@ -8,7 +8,8 @@ struct LinkToMacApp: App {
     init() {
         let identity = IdentityStore()
         let pairedDeviceStore = PairedDeviceStore()
-        let server = ConnectionServer(identity: identity, pairedDeviceStore: pairedDeviceStore)
+        let notificationStore = NotificationStore()
+        let server = ConnectionServer(identity: identity, pairedDeviceStore: pairedDeviceStore, notificationStore: notificationStore)
         _server = State(initialValue: server)
         AppDelegate.server = server
     }
@@ -18,6 +19,11 @@ struct LinkToMacApp: App {
             MenuBarView(server: server)
         }
         .menuBarExtraStyle(.window)
+
+        Window("LinkToMac", id: "main") {
+            MainWindowView(server: server)
+        }
+        .defaultSize(width: 720, height: 480)
     }
 }
 

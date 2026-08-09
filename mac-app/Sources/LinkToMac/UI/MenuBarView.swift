@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MenuBarView: View {
     var server: ConnectionServer
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -29,7 +30,13 @@ struct MenuBarView: View {
     private var header: some View {
         HStack {
             Image(systemName: "iphone.and.arrow.forward")
-            Text("LinkToMac").font(.headline)
+            Button {
+                openWindow(id: "main")
+                NSApplication.shared.activate(ignoringOtherApps: true)
+            } label: {
+                Text("LinkToMac").font(.headline)
+            }
+            .buttonStyle(.plain)
             Spacer()
             Circle()
                 .fill(statusColor)
