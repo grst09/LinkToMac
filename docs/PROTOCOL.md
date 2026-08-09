@@ -119,4 +119,25 @@ PhotoThumbnail = {id, takenAt, thumbnailBase64}
 
 Photo queries also avoid `LIMIT`/`OFFSET` in the SQL sort order, for the same OEM-provider-compatibility reason as call log/SMS (see PLAN.md) — offset/limit are applied in Kotlin after fetching the full sorted id list.
 
-Future phases add `mirror.*` message family on the same envelope.
+## Message types (Phase 4)
+
+Screen mirroring splits into a **control plane** (JSON, the existing encrypted envelope — start/stop/config/input) and a **data plane** (raw binary WebSocket frames — the H.264 video itself). Video frames are not JSON: at 30fps, base64-encoding every frame and wrapping it in a JSON envelope would add ~33% size overhead plus per-frame string/parse overhead, multiplied 30-60 times a second. `NWProtocolWebSocket` and OkHttp's WebSocket both support binary frames natively alongside text, so video rides the same connection and port, just a different opcode.
+
+**Binary frame format** (Android → Mac only): `nonce (12 bytes) || AES-256-GCM(sessionKey, nonce, raw H.264 NAL unit bytes)`. The NAL bytes are exactly what `MediaCodec`'s encoder output buffer contains — Annex-B format (`00 00 00 01`-prefixed) — unmodified before encryption. No JSON, no envelope `type` field; a binary WebSocket opcode *is* the type. The same AES-GCM session key and encrypted framing as the JSON control channel — this isn't a lower-security fast path, just a different serialization.
+
+**Control messages** (JSON, existing envelope):
+
+| type | direction | payload |
+|---|---|---|
+| `mirror.start` | Mac → Android | `{}` — triggers the MediaProjection permission flow if not already granted this session (Android *requires* bringing an Activity to the foreground for this — a real UX interruption with no way around it without root) |
+| `mirror.stop` | Mac → Android | `{}` |
+| `mirror.config` | Android → Mac | `{width, height, fps, spsBase64, ppsBase64}` — sent once, right after capture actually starts, before any binary video frames. `sps`/`pps` (no start codes) let the Mac build a `CMFormatDescription` via `CMVideoFormatDescriptionCreateFromH264ParameterSets` before it needs to decode anything |
+| `mirror.stopped` | Android → Mac | `{reason}` — `"requested"` \| `"permission_denied"` \| `"error"` |
+| `mirror.tap` | Mac → Android | `{x, y}` — normalized 0.0–1.0, relative to the phone's screen, so the Mac's rendered view size never has to match phone resolution |
+| `mirror.swipe` | Mac → Android | `{startX, startY, endX, endY, durationMs}` — normalized |
+| `mirror.key` | Mac → Android | `{action}` — `"back"` \| `"home"` \| `"recents"`, the only reliable non-touch actions achievable via `AccessibilityService.performGlobalAction` without root |
+| `mirror.textInput` | Mac → Android | `{text}` — sets clipboard + dispatches `ACTION_PASTE` on the currently-focused editable `AccessibilityNodeInfo`. This is a real limitation, not a design choice: without root or being the system IME, an app cannot inject arbitrary raw key events (`Instrumentation.sendKeySync` needs a signature-level permission); paste-into-focused-field is the closest equivalent available to a normal accessibility service |
+
+Android requires the input-injection accessibility service to be enabled manually via Settings (same pattern as notification-listener access in Phase 1) — it can't be granted programmatically.
+
+Future phases: none currently planned beyond Phase 4.

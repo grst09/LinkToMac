@@ -136,6 +136,41 @@ struct DeviceStatusPayload: Codable {
     let isCharging: Bool
 }
 
+// MARK: - Screen mirroring payloads (Phase 4)
+
+struct MirrorConfigPayload: Codable {
+    let width: Int
+    let height: Int
+    let fps: Int
+    let spsBase64: String
+    let ppsBase64: String
+}
+
+struct MirrorStoppedPayload: Codable {
+    let reason: String // requested | permission_denied | error
+}
+
+struct MirrorTapPayload: Codable {
+    let x: Double // normalized 0.0-1.0
+    let y: Double
+}
+
+struct MirrorSwipePayload: Codable {
+    let startX: Double
+    let startY: Double
+    let endX: Double
+    let endY: Double
+    let durationMs: Int
+}
+
+struct MirrorKeyPayload: Codable {
+    let action: String // back | home | recents
+}
+
+struct MirrorTextInputPayload: Codable {
+    let text: String
+}
+
 /// Minimal untyped JSON box so `Message.payload` can hold any of the payload structs above
 /// without a giant enum of coding keys. Encoded/decoded via JSONSerialization under the hood.
 enum JSONValue: Codable {

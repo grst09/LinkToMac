@@ -1,0 +1,4 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="accessibility_service_description">Lets LinkToMac relay taps, swipes, and typed text from your Mac while screen mirroring is active.</string>
+</resources>

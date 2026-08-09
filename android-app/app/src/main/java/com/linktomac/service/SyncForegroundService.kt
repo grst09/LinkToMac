@@ -85,6 +85,31 @@ class SyncForegroundService : Service() {
                 }
             }
         }
+        connection.onMirrorStartRequested = {
+            // MediaProjection permission can only be requested from a foreground Activity — no
+            // way around bringing the phone's screen to the front for this, even though the
+            // request originated from the Mac. See MainActivity's ACTION_REQUEST_MIRROR_PERMISSION.
+            val intent = Intent(applicationContext, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                action = MainActivity.ACTION_REQUEST_MIRROR_PERMISSION
+            }
+            startActivity(intent)
+        }
+        connection.onMirrorStopRequested = { ScreenMirrorService.stop(applicationContext) }
+        connection.onMirrorTapRequested = { x, y ->
+            android.util.Log.d("SyncForegroundService", "mirror.tap received x=$x y=$y instance=${InputInjectionAccessibilityService.instance}")
+            InputInjectionAccessibilityService.instance?.performTap(x, y)
+        }
+        connection.onMirrorSwipeRequested = { startX, startY, endX, endY, durationMs ->
+            android.util.Log.d("SyncForegroundService", "mirror.swipe received instance=${InputInjectionAccessibilityService.instance}")
+            InputInjectionAccessibilityService.instance?.performSwipe(startX, startY, endX, endY, durationMs)
+        }
+        connection.onMirrorKeyRequested = { action ->
+            InputInjectionAccessibilityService.instance?.performGlobalKeyAction(action)
+        }
+        connection.onMirrorTextInputRequested = { text ->
+            InputInjectionAccessibilityService.instance?.pasteText(text)
+        }
         connection.state.onEach { state ->
             updateNotification(state)
             if (state is ConnectionState.Connected) {
@@ -257,6 +282,10 @@ class SyncForegroundService : Service() {
             private set
 
         fun connectionState(): kotlinx.coroutines.flow.StateFlow<ConnectionState>? = instance?.connection?.state
+
+        /** Direct, same-process access to the live connection — used by [ScreenMirrorService]
+         *  to send video frames without routing high-frequency binary data through Intents. */
+        fun activeConnection(): MacConnection? = instance?.connection
 
         fun start(context: Context) {
             context.startForegroundService(Intent(context, SyncForegroundService::class.java))

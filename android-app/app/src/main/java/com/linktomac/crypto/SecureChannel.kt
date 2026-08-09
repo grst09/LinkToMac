@@ -72,6 +72,27 @@ object SecureChannel {
         return cipher.doFinal(ciphertext)
     }
 
+    /** Raw-bytes variant for binary WebSocket frames (screen-mirroring video) — see
+     *  docs/PROTOCOL.md's Phase 4 binary frame format. Same cipher, no base64/JSON: just
+     *  `nonce (12 bytes) || ciphertext` concatenated, since a binary opcode frame doesn't need
+     *  a text envelope around it. */
+    fun sealRaw(plaintext: ByteArray, key: SecretKeySpec): ByteArray {
+        val nonce = ByteArray(12).also { SecureRandom().nextBytes(it) }
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.ENCRYPT_MODE, key, GCMParameterSpec(128, nonce))
+        val ciphertext = cipher.doFinal(plaintext)
+        return nonce + ciphertext
+    }
+
+    fun openRaw(frame: ByteArray, key: SecretKeySpec): ByteArray {
+        require(frame.size > 12) { "frame too short to contain a nonce" }
+        val nonce = frame.copyOfRange(0, 12)
+        val ciphertext = frame.copyOfRange(12, frame.size)
+        val cipher = Cipher.getInstance("AES/GCM/NoPadding")
+        cipher.init(Cipher.DECRYPT_MODE, key, GCMParameterSpec(128, nonce))
+        return cipher.doFinal(ciphertext)
+    }
+
     private fun encodeX963(publicKey: ECPublicKey): ByteArray {
         val x = unsignedBytes(publicKey.w.affineX, FIELD_SIZE)
         val y = unsignedBytes(publicKey.w.affineY, FIELD_SIZE)

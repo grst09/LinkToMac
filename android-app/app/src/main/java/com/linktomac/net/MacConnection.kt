@@ -16,6 +16,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
+import okio.ByteString.Companion.toByteString
 import javax.crypto.spec.SecretKeySpec
 
 sealed interface ConnectionState {
@@ -64,6 +65,12 @@ class MacConnection(
     var onSmsSendRequested: ((address: String, body: String) -> Unit)? = null
     var onPhotoPageRequested: ((offset: Int, limit: Int) -> Unit)? = null
     var onPhotoFullRequested: ((id: String) -> Unit)? = null
+    var onMirrorStartRequested: (() -> Unit)? = null
+    var onMirrorStopRequested: (() -> Unit)? = null
+    var onMirrorTapRequested: ((x: Double, y: Double) -> Unit)? = null
+    var onMirrorSwipeRequested: ((startX: Double, startY: Double, endX: Double, endY: Double, durationMs: Int) -> Unit)? = null
+    var onMirrorKeyRequested: ((action: String) -> Unit)? = null
+    var onMirrorTextInputRequested: ((text: String) -> Unit)? = null
 
     /** Connect using a freshly scanned QR pairing payload. */
     fun connectForPairing(payload: PairingQrPayload) {
@@ -157,6 +164,24 @@ class MacConnection(
                 "photo.fullRequest" -> {
                     val payload = json.decodeFromJsonElement<PhotoFullRequestPayload>(envelope.payload)
                     onPhotoFullRequested?.invoke(payload.id)
+                }
+                "mirror.start" -> onMirrorStartRequested?.invoke()
+                "mirror.stop" -> onMirrorStopRequested?.invoke()
+                "mirror.tap" -> {
+                    val payload = json.decodeFromJsonElement<MirrorTapPayload>(envelope.payload)
+                    onMirrorTapRequested?.invoke(payload.x, payload.y)
+                }
+                "mirror.swipe" -> {
+                    val payload = json.decodeFromJsonElement<MirrorSwipePayload>(envelope.payload)
+                    onMirrorSwipeRequested?.invoke(payload.startX, payload.startY, payload.endX, payload.endY, payload.durationMs)
+                }
+                "mirror.key" -> {
+                    val payload = json.decodeFromJsonElement<MirrorKeyPayload>(envelope.payload)
+                    onMirrorKeyRequested?.invoke(payload.action)
+                }
+                "mirror.textInput" -> {
+                    val payload = json.decodeFromJsonElement<MirrorTextInputPayload>(envelope.payload)
+                    onMirrorTextInputRequested?.invoke(payload.text)
                 }
                 "pong" -> {}
             }
@@ -257,6 +282,23 @@ class MacConnection(
 
     fun sendDeviceStatus(payload: DeviceStatusPayload) {
         send("device.status", json.encodeToJsonElement(payload))
+    }
+
+    fun sendMirrorConfig(payload: MirrorConfigPayload) {
+        send("mirror.config", json.encodeToJsonElement(payload))
+    }
+
+    fun sendMirrorStopped(reason: String) {
+        send("mirror.stopped", json.encodeToJsonElement(MirrorStoppedPayload(reason)))
+    }
+
+    /** Binary WebSocket frame, not the JSON envelope — see docs/PROTOCOL.md's Phase 4 binary
+     *  frame format. `nalBytes` is exactly what MediaCodec's encoder output buffer contains. */
+    fun sendMirrorFrame(nalBytes: ByteArray) {
+        val ws = webSocket ?: return
+        val key = sessionKey ?: return
+        val frame = SecureChannel.sealRaw(nalBytes, key)
+        ws.send(frame.toByteString())
     }
 
     private fun send(type: String, payload: kotlinx.serialization.json.JsonElement) {

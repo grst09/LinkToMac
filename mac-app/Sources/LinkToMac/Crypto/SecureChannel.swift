@@ -60,6 +60,22 @@ enum SecureChannel {
         let sealedBox = try AES.GCM.SealedBox(nonce: nonce, ciphertext: ciphertextData.dropLast(16), tag: ciphertextData.suffix(16))
         return try AES.GCM.open(sealedBox, using: key)
     }
+
+    /// Raw-bytes variant for binary WebSocket frames (screen-mirroring video) — see
+    /// docs/PROTOCOL.md's Phase 4 binary frame format. `AES.GCM.SealedBox.combined` is already
+    /// exactly `nonce || ciphertext || tag`, which is the wire format, so no base64/JSON needed.
+    static func sealRaw(_ plaintext: Data, using key: SymmetricKey) throws -> Data {
+        let sealedBox = try AES.GCM.seal(plaintext, using: key)
+        guard let combined = sealedBox.combined else {
+            throw SecureChannelError.sealFailed
+        }
+        return combined
+    }
+
+    static func openRaw(_ data: Data, using key: SymmetricKey) throws -> Data {
+        let sealedBox = try AES.GCM.SealedBox(combined: data)
+        return try AES.GCM.open(sealedBox, using: key)
+    }
 }
 
 enum SecureChannelError: Error {

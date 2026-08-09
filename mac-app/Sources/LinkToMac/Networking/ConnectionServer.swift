@@ -39,6 +39,7 @@ final class ConnectionServer {
     let messageStore: MessageStore
     let photoStore: PhotoStore
     let deviceStatusStore: DeviceStatusStore
+    let mirrorStore: MirrorStore
 
     private var listener: NWListener?
     private var activeConnection: NWConnection?
@@ -53,7 +54,8 @@ final class ConnectionServer {
         callLogStore: CallLogStore,
         messageStore: MessageStore,
         photoStore: PhotoStore,
-        deviceStatusStore: DeviceStatusStore
+        deviceStatusStore: DeviceStatusStore,
+        mirrorStore: MirrorStore
     ) {
         self.identity = identity
         self.pairedDeviceStore = pairedDeviceStore
@@ -62,6 +64,7 @@ final class ConnectionServer {
         self.messageStore = messageStore
         self.photoStore = photoStore
         self.deviceStatusStore = deviceStatusStore
+        self.mirrorStore = mirrorStore
     }
 
     /// Stops the listener entirely — not just the active connection. A phone's background
@@ -195,14 +198,33 @@ final class ConnectionServer {
     }
 
     private func receiveNext(on connection: NWConnection) {
-        connection.receiveMessage { [weak self] data, _, isComplete, error in
+        connection.receiveMessage { [weak self] data, context, isComplete, error in
             guard let self else { return }
             if let data, isComplete {
-                self.handleIncoming(data, on: connection)
+                let metadata = context?.protocolMetadata(definition: NWProtocolWebSocket.definition) as? NWProtocolWebSocket.Metadata
+                if metadata?.opcode == .binary {
+                    self.handleBinaryIncoming(data)
+                } else {
+                    self.handleIncoming(data, on: connection)
+                }
             }
             if error == nil {
                 self.receiveNext(on: connection)
             }
+        }
+    }
+
+    /// Video frames only — see docs/PROTOCOL.md's Phase 4 binary frame format. Decrypted bytes
+    /// go straight to the decoder, off the main queue, since this can arrive at up to 30fps.
+    private func handleBinaryIncoming(_ data: Data) {
+        guard let key = sessionKey else { return }
+        do {
+            let plaintext = try SecureChannel.openRaw(data, using: key)
+            DispatchQueue.global(qos: .userInteractive).async { [mirrorStore] in
+                mirrorStore.handleFrame(plaintext)
+            }
+        } catch {
+            print("LinkToMac: failed to decrypt mirror frame: \(error)")
         }
     }
 
@@ -298,6 +320,12 @@ final class ConnectionServer {
         case "photo.libraryChanged":
             photoStore.invalidate()
             requestPhotoPage(offset: 0, limit: Self.defaultPhotoPageSize)
+        case "mirror.config":
+            let payload = try message.payload.decoded(as: MirrorConfigPayload.self)
+            mirrorStore.updateConfig(payload)
+        case "mirror.stopped":
+            let payload = try message.payload.decoded(as: MirrorStoppedPayload.self)
+            mirrorStore.handleStopped(reason: payload.reason)
         case "ping":
             try send(type: "pong", payload: EmptyPayload(), on: connection)
         default:
@@ -332,6 +360,52 @@ final class ConnectionServer {
     func requestPhotoFull(id: String) {
         guard let connection = activeConnection else { return }
         try? send(type: "photo.fullRequest", payload: PhotoFullRequestPayload(id: id), on: connection)
+    }
+
+    func startMirroring() {
+        guard let connection = activeConnection else { return }
+        try? send(type: "mirror.start", payload: EmptyPayload(), on: connection)
+    }
+
+    func stopMirroring() {
+        guard let connection = activeConnection else { return }
+        try? send(type: "mirror.stop", payload: EmptyPayload(), on: connection)
+        mirrorStore.handleStopped(reason: "requested")
+    }
+
+    func sendMirrorTap(x: Double, y: Double) {
+        guard let connection = activeConnection else {
+            print("LinkToMac: sendMirrorTap — no active connection")
+            return
+        }
+        do {
+            try send(type: "mirror.tap", payload: MirrorTapPayload(x: x, y: y), on: connection)
+        } catch {
+            print("LinkToMac: sendMirrorTap failed: \(error)")
+        }
+    }
+
+    func sendMirrorSwipe(startX: Double, startY: Double, endX: Double, endY: Double, durationMs: Int) {
+        guard let connection = activeConnection else {
+            print("LinkToMac: sendMirrorSwipe — no active connection")
+            return
+        }
+        let payload = MirrorSwipePayload(startX: startX, startY: startY, endX: endX, endY: endY, durationMs: durationMs)
+        do {
+            try send(type: "mirror.swipe", payload: payload, on: connection)
+        } catch {
+            print("LinkToMac: sendMirrorSwipe failed: \(error)")
+        }
+    }
+
+    func sendMirrorKey(action: String) {
+        guard let connection = activeConnection else { return }
+        try? send(type: "mirror.key", payload: MirrorKeyPayload(action: action), on: connection)
+    }
+
+    func sendMirrorTextInput(text: String) {
+        guard let connection = activeConnection else { return }
+        try? send(type: "mirror.textInput", payload: MirrorTextInputPayload(text: text), on: connection)
     }
 
     private func send<T: Encodable>(type: String, payload: T, on connection: NWConnection) throws {

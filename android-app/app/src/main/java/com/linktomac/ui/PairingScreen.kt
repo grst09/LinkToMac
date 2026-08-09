@@ -40,6 +40,8 @@ fun PairingScreen(
     onRequestCallsAndMessagesAccess: () -> Unit,
     isPhotoAccessGranted: () -> Boolean,
     onRequestPhotoAccess: () -> Unit,
+    isAccessibilityServiceEnabled: () -> Boolean,
+    onRequestAccessibilityAccess: () -> Unit,
     isPaired: () -> Boolean,
     pairedMacName: () -> String?,
     onReconnect: () -> Unit,
@@ -50,6 +52,7 @@ fun PairingScreen(
     var notificationAccessGranted by remember { mutableStateOf(isNotificationAccessGranted()) }
     var callsAndMessagesAccessGranted by remember { mutableStateOf(isCallsAndMessagesAccessGranted()) }
     var photoAccessGranted by remember { mutableStateOf(isPhotoAccessGranted()) }
+    var accessibilityServiceEnabled by remember { mutableStateOf(isAccessibilityServiceEnabled()) }
     var paired by remember { mutableStateOf(isPaired()) }
     var macName by remember { mutableStateOf(pairedMacName()) }
     var connectionState by remember { mutableStateOf<ConnectionState>(ConnectionState.Idle) }
@@ -71,6 +74,7 @@ fun PairingScreen(
                 notificationAccessGranted = isNotificationAccessGranted()
                 callsAndMessagesAccessGranted = isCallsAndMessagesAccessGranted()
                 photoAccessGranted = isPhotoAccessGranted()
+                accessibilityServiceEnabled = isAccessibilityServiceEnabled()
                 paired = isPaired()
                 macName = pairedMacName()
             }
@@ -140,6 +144,24 @@ fun PairingScreen(
                     Spacer(Modifier.height(12.dp))
                     Button(onClick = onRequestPhotoAccess) {
                         Text("Grant Access")
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+
+        if (!accessibilityServiceEnabled) {
+            Card {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Screen mirroring access needed", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "To tap, swipe, and type on your phone from your Mac during screen mirroring, LinkToMac needs Accessibility access. Find LinkToMac in the list and turn it on.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = onRequestAccessibilityAccess) {
+                        Text("Open Settings")
                     }
                 }
             }

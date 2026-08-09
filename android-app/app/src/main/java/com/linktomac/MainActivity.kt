@@ -1,8 +1,10 @@
 package com.linktomac
 
 import android.Manifest
+import android.app.Activity
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.media.projection.MediaProjectionManager
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
@@ -15,6 +17,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.journeyapps.barcodescanner.ScanContract
+import com.linktomac.service.InputInjectionAccessibilityService
+import com.linktomac.service.ScreenMirrorService
 import com.linktomac.service.SyncForegroundService
 import com.linktomac.storage.PairedDeviceStore
 import com.linktomac.ui.PairingScreen
@@ -49,6 +53,16 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    private val screenCapturePermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
+            val data = result.data
+            if (result.resultCode == Activity.RESULT_OK && data != null) {
+                ScreenMirrorService.start(applicationContext, result.resultCode, data)
+            } else {
+                SyncForegroundService.activeConnection()?.sendMirrorStopped("permission_denied")
+            }
+        }
+
     private lateinit var scanLauncher: ActivityResultLauncher<com.journeyapps.barcodescanner.ScanOptions>
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,6 +78,8 @@ class MainActivity : ComponentActivity() {
             notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
         }
 
+        handleIntent(intent)
+
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
@@ -74,6 +90,8 @@ class MainActivity : ComponentActivity() {
                         onRequestCallsAndMessagesAccess = { requestCallsAndMessagesAccess() },
                         isPhotoAccessGranted = { isPhotoAccessGranted() },
                         onRequestPhotoAccess = { requestPhotoAccess() },
+                        isAccessibilityServiceEnabled = { isAccessibilityServiceEnabled() },
+                        onRequestAccessibilityAccess = { openAccessibilitySettings() },
                         isPaired = { pairedDeviceStore.isPaired },
                         pairedMacName = { pairedDeviceStore.macDeviceName },
                         onReconnect = { SyncForegroundService.reconnectNow(applicationContext) },
@@ -84,6 +102,25 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleIntent(intent)
+    }
+
+    /** The Mac-initiated "start mirroring" request arrives in SyncForegroundService (a
+     *  background service), but MediaProjection consent can only be requested from a
+     *  foreground Activity — this is what brings the phone's screen to the front for that. */
+    private fun handleIntent(intent: Intent?) {
+        if (intent?.action == ACTION_REQUEST_MIRROR_PERMISSION) {
+            requestScreenCapturePermission()
+        }
+    }
+
+    private fun requestScreenCapturePermission() {
+        val projectionManager = getSystemService(MediaProjectionManager::class.java)
+        screenCapturePermissionLauncher.launch(projectionManager.createScreenCaptureIntent())
     }
 
     private fun requestCameraAndScan() {
@@ -138,5 +175,24 @@ class MainActivity : ComponentActivity() {
 
     private fun requestPhotoAccess() {
         photoPermissionLauncher.launch(photoPermission())
+    }
+
+    /** Same "check the system list" pattern as isNotificationAccessGranted — accessibility
+     *  services can't be queried via checkSelfPermission, only via this settings string. */
+    private fun isAccessibilityServiceEnabled(): Boolean {
+        val expectedComponent = "$packageName/${InputInjectionAccessibilityService::class.java.name}"
+        val enabledServices = Settings.Secure.getString(
+            contentResolver,
+            Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES
+        ) ?: return false
+        return enabledServices.split(':').any { it.equals(expectedComponent, ignoreCase = true) }
+    }
+
+    private fun openAccessibilitySettings() {
+        startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    }
+
+    companion object {
+        const val ACTION_REQUEST_MIRROR_PERMISSION = "com.linktomac.action.REQUEST_MIRROR_PERMISSION"
     }
 }

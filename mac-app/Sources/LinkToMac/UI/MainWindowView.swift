@@ -101,11 +101,7 @@ struct MainWindowView: View {
                 detail: "A contacts browser isn't currently planned, but may be added in a future phase."
             )
         case .mirroring:
-            ComingSoonView(
-                title: "Screen Mirroring",
-                systemImage: "rectangle.on.rectangle",
-                detail: "Screen mirroring is planned for Phase 4 — see docs/PLAN.md."
-            )
+            ScreenMirrorView(server: server)
         case .settings:
             ComingSoonView(
                 title: "Settings",

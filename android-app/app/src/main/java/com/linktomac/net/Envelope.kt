@@ -163,3 +163,44 @@ data class DeviceStatusPayload(
     val batteryPercent: Int,
     val isCharging: Boolean
 )
+
+// Phase 4: screen mirroring
+
+@Serializable
+data class MirrorConfigPayload(
+    val width: Int,
+    val height: Int,
+    val fps: Int,
+    val spsBase64: String,
+    val ppsBase64: String
+)
+
+@Serializable
+data class MirrorStoppedPayload(
+    val reason: String // requested | permission_denied | error
+)
+
+@Serializable
+data class MirrorTapPayload(
+    val x: Double, // normalized 0.0-1.0
+    val y: Double
+)
+
+@Serializable
+data class MirrorSwipePayload(
+    val startX: Double,
+    val startY: Double,
+    val endX: Double,
+    val endY: Double,
+    val durationMs: Int
+)
+
+@Serializable
+data class MirrorKeyPayload(
+    val action: String // back | home | recents
+)
+
+@Serializable
+data class MirrorTextInputPayload(
+    val text: String
+)
