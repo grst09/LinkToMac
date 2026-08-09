@@ -29,6 +29,11 @@ struct SidebarDeviceCard: View {
                     }
                 }
                 Spacer()
+                Toggle("", isOn: isActive)
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .help(isActive.wrappedValue ? "Disconnect" : "Reconnect")
             }
 
             if let percent = server.deviceStatusStore.batteryPercent {
@@ -54,8 +59,8 @@ struct SidebarDeviceCard: View {
         switch server.state {
         case .connected: return "Connected"
         case .listening: return "Waiting to pair"
-        case .idle: return "Idle"
-        case .failed: return "Disconnected"
+        case .idle: return "Disconnected"
+        case .failed: return "Connection error"
         }
     }
 
@@ -66,5 +71,26 @@ struct SidebarDeviceCard: View {
         case .failed: return .red
         case .idle: return .gray
         }
+    }
+
+    /// Bound directly to the live connection state rather than a locally-tracked bool, so the
+    /// switch always reflects reality — including the brief moment after tapping "on" where the
+    /// listener hasn't finished (re)binding yet.
+    private var isActive: Binding<Bool> {
+        Binding(
+            get: {
+                switch server.state {
+                case .listening, .connected: return true
+                case .idle, .failed: return false
+                }
+            },
+            set: { newValue in
+                if newValue {
+                    server.start()
+                } else {
+                    server.disconnect()
+                }
+            }
+        )
     }
 }

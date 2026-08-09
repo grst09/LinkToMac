@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 
 struct PairedDevice: Codable, Identifiable, Equatable {
     let id: String // Android deviceId
@@ -13,6 +14,7 @@ struct PairedDevice: Codable, Identifiable, Equatable {
 ///
 /// A proper Keychain-backed store is planned before this ships; for local development
 /// a flat JSON file is simpler to inspect and reset (`rm ~/Library/Application Support/LinkToMac/paired-devices.json`).
+@Observable
 final class PairedDeviceStore {
     private let fileURL: URL
     private(set) var devices: [PairedDevice] = []

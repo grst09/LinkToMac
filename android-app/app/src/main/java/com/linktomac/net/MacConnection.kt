@@ -222,6 +222,7 @@ class MacConnection(
                 pairingSalt = ctx.saltBase64
             )
         }
+        pairedDeviceStore.macDeviceName = ack.macDeviceName
         _state.value = ConnectionState.Connected(ack.macDeviceName)
     }
 

@@ -2,13 +2,16 @@ package com.linktomac.ui
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -37,12 +40,18 @@ fun PairingScreen(
     onRequestCallsAndMessagesAccess: () -> Unit,
     isPhotoAccessGranted: () -> Boolean,
     onRequestPhotoAccess: () -> Unit,
+    isPaired: () -> Boolean,
+    pairedMacName: () -> String?,
+    onReconnect: () -> Unit,
+    onForgetDevice: () -> Unit,
     onScanRequested: () -> Unit,
     onStartService: () -> Unit
 ) {
     var notificationAccessGranted by remember { mutableStateOf(isNotificationAccessGranted()) }
     var callsAndMessagesAccessGranted by remember { mutableStateOf(isCallsAndMessagesAccessGranted()) }
     var photoAccessGranted by remember { mutableStateOf(isPhotoAccessGranted()) }
+    var paired by remember { mutableStateOf(isPaired()) }
+    var macName by remember { mutableStateOf(pairedMacName()) }
     var connectionState by remember { mutableStateOf<ConnectionState>(ConnectionState.Idle) }
 
     LaunchedEffect(Unit) {
@@ -62,6 +71,8 @@ fun PairingScreen(
                 notificationAccessGranted = isNotificationAccessGranted()
                 callsAndMessagesAccessGranted = isCallsAndMessagesAccessGranted()
                 photoAccessGranted = isPhotoAccessGranted()
+                paired = isPaired()
+                macName = pairedMacName()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -135,35 +146,78 @@ fun PairingScreen(
             Spacer(Modifier.height(16.dp))
         }
 
-        when (val state = connectionState) {
-            is ConnectionState.Connected -> {
-                Text(
-                    "Connected to ${state.macDeviceName}",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = Color(0xFF2E7D32)
-                )
-            }
-            ConnectionState.Connecting -> {
-                CircularProgressIndicator()
-                Spacer(Modifier.height(12.dp))
-                Text("Connecting…", style = MaterialTheme.typography.bodyMedium)
-            }
-            is ConnectionState.Failed -> {
-                Text(
-                    "Couldn't pair: ${state.message}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = Color(0xFFC62828)
-                )
-                Spacer(Modifier.height(12.dp))
-                Button(onClick = onScanRequested) {
-                    Text("Try Again")
+        if (paired) {
+            Card {
+                Column(Modifier.padding(16.dp)) {
+                    Text(macName ?: "Paired Mac", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        pairedStatusText(connectionState),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = pairedStatusColor(connectionState)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Row {
+                        if (connectionState !is ConnectionState.Connected && connectionState !is ConnectionState.Connecting) {
+                            Button(onClick = onReconnect) {
+                                Text("Reconnect")
+                            }
+                            Spacer(Modifier.width(8.dp))
+                        }
+                        OutlinedButton(onClick = {
+                            paired = false
+                            onForgetDevice()
+                        }) {
+                            Text("Forget This Mac")
+                        }
+                    }
                 }
             }
-            ConnectionState.Idle -> {
-                Button(onClick = onScanRequested) {
-                    Text("Scan Pairing Code")
+        } else {
+            when (val state = connectionState) {
+                is ConnectionState.Connected -> {
+                    Text(
+                        "Connected to ${state.macDeviceName}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color(0xFF2E7D32)
+                    )
+                }
+                ConnectionState.Connecting -> {
+                    CircularProgressIndicator()
+                    Spacer(Modifier.height(12.dp))
+                    Text("Connecting…", style = MaterialTheme.typography.bodyMedium)
+                }
+                is ConnectionState.Failed -> {
+                    Text(
+                        "Couldn't pair: ${state.message}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = Color(0xFFC62828)
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = onScanRequested) {
+                        Text("Try Again")
+                    }
+                }
+                ConnectionState.Idle -> {
+                    Button(onClick = onScanRequested) {
+                        Text("Scan Pairing Code")
+                    }
                 }
             }
         }
     }
+}
+
+private fun pairedStatusText(state: ConnectionState): String = when (state) {
+    is ConnectionState.Connected -> "Connected"
+    ConnectionState.Connecting -> "Connecting…"
+    is ConnectionState.Failed -> "Disconnected — ${state.message}"
+    ConnectionState.Idle -> "Not connected"
+}
+
+private fun pairedStatusColor(state: ConnectionState): Color = when (state) {
+    is ConnectionState.Connected -> Color(0xFF2E7D32)
+    ConnectionState.Connecting -> Color.Gray
+    is ConnectionState.Failed -> Color(0xFFC62828)
+    ConnectionState.Idle -> Color.Gray
 }

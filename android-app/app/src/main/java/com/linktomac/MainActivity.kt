@@ -16,10 +16,16 @@ import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
 import com.journeyapps.barcodescanner.ScanContract
 import com.linktomac.service.SyncForegroundService
+import com.linktomac.storage.PairedDeviceStore
 import com.linktomac.ui.PairingScreen
 import com.linktomac.ui.qrScanOptions
 
 class MainActivity : ComponentActivity() {
+
+    // A second PairedDeviceStore instance, independent of SyncForegroundService's — reading
+    // EncryptedSharedPreferences from multiple instances backed by the same file is safe, and
+    // this lets the UI show paired-device state without depending on the service being alive.
+    private val pairedDeviceStore by lazy { PairedDeviceStore(applicationContext) }
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -68,6 +74,10 @@ class MainActivity : ComponentActivity() {
                         onRequestCallsAndMessagesAccess = { requestCallsAndMessagesAccess() },
                         isPhotoAccessGranted = { isPhotoAccessGranted() },
                         onRequestPhotoAccess = { requestPhotoAccess() },
+                        isPaired = { pairedDeviceStore.isPaired },
+                        pairedMacName = { pairedDeviceStore.macDeviceName },
+                        onReconnect = { SyncForegroundService.reconnectNow(applicationContext) },
+                        onForgetDevice = { SyncForegroundService.forgetPairedDevice(applicationContext) },
                         onScanRequested = { requestCameraAndScan() },
                         onStartService = { SyncForegroundService.start(applicationContext) }
                     )

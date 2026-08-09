@@ -43,6 +43,12 @@ class PairedDeviceStore(context: Context) {
         get() = prefs.getString(KEY_PAIRING_SALT, null)
         private set(value) = prefs.edit().putString(KEY_PAIRING_SALT, value).apply()
 
+    /** Display name only — not part of the trust chain, just kept fresh so the paired-device
+     *  UI can show something meaningful even while disconnected. */
+    var macDeviceName: String?
+        get() = prefs.getString(KEY_MAC_DEVICE_NAME, null)
+        set(value) = prefs.edit().putString(KEY_MAC_DEVICE_NAME, value).apply()
+
     val isPaired: Boolean get() = deviceToken != null && pairingSalt != null && macPublicKey != null
 
     fun savePairing(macDeviceId: String, macPublicKey: String, deviceToken: String, pairingSalt: String) {
@@ -61,5 +67,6 @@ class PairedDeviceStore(context: Context) {
         const val KEY_MAC_PUBLIC_KEY = "mac_public_key"
         const val KEY_DEVICE_TOKEN = "device_token"
         const val KEY_PAIRING_SALT = "pairing_salt"
+        const val KEY_MAC_DEVICE_NAME = "mac_device_name"
     }
 }

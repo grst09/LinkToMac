@@ -44,6 +44,7 @@ final class ConnectionServer {
     private var activeConnection: NWConnection?
     private var sessionKey: SymmetricKey?
     private var activePairingToken: Data?
+    private var activeDeviceId: String?
 
     init(
         identity: IdentityStore,
@@ -61,6 +62,21 @@ final class ConnectionServer {
         self.messageStore = messageStore
         self.photoStore = photoStore
         self.deviceStatusStore = deviceStatusStore
+    }
+
+    /// Stops the listener entirely — not just the active connection. A phone's background
+    /// discovery loop reconnects automatically the moment it sees the Bonjour service again,
+    /// so merely closing the socket wouldn't keep it disconnected; the service has to actually
+    /// stop being advertised. `start()` re-advertises it, which the phone picks up as a fresh
+    /// discovery event and reconnects to on its own — no new protocol message needed.
+    func disconnect() {
+        activeConnection?.cancel()
+        activeConnection = nil
+        sessionKey = nil
+        activeDeviceId = nil
+        listener?.cancel()
+        listener = nil
+        state = .idle
     }
 
     func start() {
@@ -112,6 +128,29 @@ final class ConnectionServer {
         return payload
     }
 
+    /// All devices that have ever completed pairing, not just the currently active one — the
+    /// Mac only holds one live connection at a time (see `accept(_:)`), but keeps every paired
+    /// device's credentials so any of them can reconnect later.
+    var pairedDevices: [PairedDevice] {
+        pairedDeviceStore.devices
+    }
+
+    /// The paired device id currently holding the live connection, if any — lets the UI mark
+    /// the right row in the paired-devices list without guessing from `state`'s device name.
+    var activeDeviceIdIfConnected: String? {
+        guard case .connected = state else { return nil }
+        return activeDeviceId
+    }
+
+    /// Removes a device's stored pairing entirely — it'll need to scan a fresh QR to reconnect.
+    /// Also drops the live connection first if this happens to be the currently active device.
+    func forgetDevice(id: String) {
+        if activeDeviceId == id {
+            disconnect()
+        }
+        pairedDeviceStore.remove(id: id)
+    }
+
     // MARK: - Connection handling
 
     private func accept(_ connection: NWConnection) {
@@ -149,6 +188,7 @@ final class ConnectionServer {
     private func handleDisconnect() {
         activeConnection = nil
         sessionKey = nil
+        activeDeviceId = nil
         if case .connected = state {
             state = .listening
         }
@@ -217,6 +257,7 @@ final class ConnectionServer {
 
         let ack = HelloAckPayload(status: "paired", deviceToken: deviceToken, macDeviceName: Host.current().localizedName ?? "Mac")
         try send(type: "helloAck", payload: ack, on: connection)
+        activeDeviceId = hello.deviceId
         state = .connected(deviceName: hello.deviceName)
     }
 

@@ -19,17 +19,28 @@ struct DeviceStatusView: View {
                     )
                     .foregroundStyle(server.deviceStatusStore.isCharging ? .green : .secondary)
                 }
-            case .failed(let message):
-                Label("Not connected", systemImage: "exclamationmark.triangle.fill")
-                    .foregroundStyle(.red)
-                    .font(.title2)
-                Text(message)
-                    .foregroundStyle(.secondary)
-            case .listening, .idle:
+                Button("Disconnect") { server.disconnect() }
+                    .padding(.top, 4)
+            case .listening:
                 Label("Waiting to pair", systemImage: "qrcode")
                     .font(.title2)
                 Text("Click the menu bar icon to scan the pairing QR code from your phone.")
                     .foregroundStyle(.secondary)
+            case .idle:
+                Label("Disconnected", systemImage: "pause.circle")
+                    .font(.title2)
+                Text("You disconnected this device. Reconnect to resume syncing.")
+                    .foregroundStyle(.secondary)
+                Button("Reconnect") { server.start() }
+                    .padding(.top, 4)
+            case .failed(let message):
+                Label("Connection error", systemImage: "exclamationmark.triangle.fill")
+                    .foregroundStyle(.red)
+                    .font(.title2)
+                Text(message)
+                    .foregroundStyle(.secondary)
+                Button("Retry") { server.start() }
+                    .padding(.top, 4)
             }
             Spacer()
         }

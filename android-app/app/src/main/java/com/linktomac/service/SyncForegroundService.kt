@@ -121,6 +121,12 @@ class SyncForegroundService : Service() {
                 syncCallsAndSms()
             }
             ACTION_REFRESH_PHOTOS -> photoRepository.observe { schedulePhotoLibraryChangedNotification() }
+            ACTION_RECONNECT -> if (pairedDeviceStore.isPaired) startDiscovery()
+            ACTION_FORGET -> {
+                discoveryJob?.cancel()
+                connection.close()
+                pairedDeviceStore.clear()
+            }
         }
         return START_STICKY
     }
@@ -173,11 +179,18 @@ class SyncForegroundService : Service() {
         connection.connectForPairing(payload)
     }
 
+    /** Cancels any existing discovery listener and starts a fresh one — NsdManager's discovery
+     *  doesn't reliably re-fire onServiceFound for a service that briefly disappeared and came
+     *  back (e.g. the Mac's own disconnect/reconnect toggle), so restarting discovery outright
+     *  is what actually gets a response, both for the background retry path and the explicit
+     *  "Reconnect" action. Reconnecting is allowed from Idle or Failed — not just Idle — so a
+     *  previous failed attempt doesn't permanently block further retries. */
     private fun startDiscovery() {
         discoveryJob?.cancel()
         discoveryJob = scope.launch {
             MacDiscovery(applicationContext).discover().collect { discovered ->
-                if (connection.state.value == ConnectionState.Idle) {
+                val state = connection.state.value
+                if (state == ConnectionState.Idle || state is ConnectionState.Failed) {
                     connection.connectForReconnect(discovered)
                 }
             }
@@ -234,6 +247,8 @@ class SyncForegroundService : Service() {
         private const val ACTION_NOTIFICATION_REMOVED = "com.linktomac.action.NOTIFICATION_REMOVED"
         private const val ACTION_REFRESH_DATA = "com.linktomac.action.REFRESH_DATA"
         private const val ACTION_REFRESH_PHOTOS = "com.linktomac.action.REFRESH_PHOTOS"
+        private const val ACTION_RECONNECT = "com.linktomac.action.RECONNECT"
+        private const val ACTION_FORGET = "com.linktomac.action.FORGET"
         private const val EXTRA_QR_PAYLOAD = "qr_payload"
         private const val EXTRA_NOTIFICATION_JSON = "notification_json"
         private const val EXTRA_NOTIFICATION_ID = "notification_id"
@@ -286,6 +301,24 @@ class SyncForegroundService : Service() {
         fun refreshPhotoObserver(context: Context) {
             val intent = Intent(context, SyncForegroundService::class.java).apply {
                 action = ACTION_REFRESH_PHOTOS
+            }
+            context.startForegroundService(intent)
+        }
+
+        /** Forces a fresh Bonjour/NSD discovery attempt using the stored pairing credentials —
+         *  no QR rescan. Exposed for a manual "Reconnect" action in the UI. */
+        fun reconnectNow(context: Context) {
+            val intent = Intent(context, SyncForegroundService::class.java).apply {
+                action = ACTION_RECONNECT
+            }
+            context.startForegroundService(intent)
+        }
+
+        /** Clears the stored pairing and drops the current connection. The phone won't attempt
+         *  to reconnect to this Mac again until it's paired fresh via QR. */
+        fun forgetPairedDevice(context: Context) {
+            val intent = Intent(context, SyncForegroundService::class.java).apply {
+                action = ACTION_FORGET
             }
             context.startForegroundService(intent)
         }
