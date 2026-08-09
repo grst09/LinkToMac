@@ -1,11 +1,16 @@
 # Roadmap
 
-1. **Foundations** — pairing, encrypted session channel, LAN discovery. *(this phase)*
-2. **Notifications** — `NotificationListenerService` → Mac popover / native banners, dismiss-sync both directions. *(this phase)*
-3. **Calls + Messages** — call log list, SMS thread view, reply-from-Mac.
-4. **Photos** — thumbnail grid, on-demand full-res fetch, optional Photos.app import.
+1. **Foundations** — pairing, encrypted session channel, LAN discovery. ✅ done
+2. **Notifications** — `NotificationListenerService` → native banners, dismiss-sync both directions. ✅ done
+3. **Calls + Messages** — call log list, SMS thread view, reply-from-Mac. ✅ done
+4. **Photos** — thumbnail grid, on-demand full-res fetch, optional Photos.app import. *(next)*
 5. **Screen mirroring** — `MediaProjection` capture → H.264 encode → stream → `VideoToolbox` decode/render, plus input relay via `AccessibilityService`.
 6. **Polish** — proper signed `.app` bundle + notarization, connection resilience, battery-optimization onboarding, settings, notification actions, UI pass.
+
+## Notes from building Phase 2
+
+- **OEM `ContentProvider` quirks are real.** Samsung's call log/SMS providers reject `LIMIT n` appended to the SQL sort-order string (`IllegalArgumentException: Invalid token LIMIT`) even though that works against stock AOSP. Cap result counts in Kotlin after the query instead of in SQL.
+- **`ContentResolver.registerContentObserver` throws `SecurityException` if the permission isn't granted** — unlike `query()`, which just returns null. Both call sites need the same defensive handling, or a missing permission crashes the whole service on `onCreate()`.
 
 ## Tech stack
 

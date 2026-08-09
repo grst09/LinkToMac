@@ -62,6 +62,47 @@ struct NotificationRemovedPayload: Codable {
     let id: String
 }
 
+// MARK: - Call log + SMS payloads (Phase 2)
+
+struct CallLogEntry: Codable, Identifiable {
+    let id: String
+    let number: String
+    let contactName: String?
+    let type: String // incoming | outgoing | missed | rejected | blocked | voicemail | unknown
+    let date: Double // epoch millis
+    let durationSeconds: Int
+}
+
+struct CallLogSyncPayload: Codable {
+    let calls: [CallLogEntry]
+}
+
+struct SmsMessage: Codable, Identifiable {
+    let id: String
+    let address: String
+    let body: String
+    let date: Double // epoch millis
+    let isOutgoing: Bool
+}
+
+struct SmsThread: Codable, Identifiable {
+    let threadId: String
+    let address: String
+    let contactName: String?
+    let messages: [SmsMessage]
+
+    var id: String { threadId }
+}
+
+struct SmsSyncPayload: Codable {
+    let threads: [SmsThread]
+}
+
+struct SmsSendPayload: Codable {
+    let address: String
+    let body: String
+}
+
 /// Minimal untyped JSON box so `Message.payload` can hold any of the payload structs above
 /// without a giant enum of coding keys. Encoded/decoded via JSONSerialization under the hood.
 enum JSONValue: Codable {

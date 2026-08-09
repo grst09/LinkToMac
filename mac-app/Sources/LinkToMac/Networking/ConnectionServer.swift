@@ -34,16 +34,26 @@ final class ConnectionServer {
     private let identity: IdentityStore
     private let pairedDeviceStore: PairedDeviceStore
     let notificationStore: NotificationStore
+    let callLogStore: CallLogStore
+    let messageStore: MessageStore
 
     private var listener: NWListener?
     private var activeConnection: NWConnection?
     private var sessionKey: SymmetricKey?
     private var activePairingToken: Data?
 
-    init(identity: IdentityStore, pairedDeviceStore: PairedDeviceStore, notificationStore: NotificationStore) {
+    init(
+        identity: IdentityStore,
+        pairedDeviceStore: PairedDeviceStore,
+        notificationStore: NotificationStore,
+        callLogStore: CallLogStore,
+        messageStore: MessageStore
+    ) {
         self.identity = identity
         self.pairedDeviceStore = pairedDeviceStore
         self.notificationStore = notificationStore
+        self.callLogStore = callLogStore
+        self.messageStore = messageStore
     }
 
     func start() {
@@ -220,6 +230,12 @@ final class ConnectionServer {
         case "notification.removed":
             let payload = try message.payload.decoded(as: NotificationRemovedPayload.self)
             notificationStore.remove(id: payload.id)
+        case "call.sync":
+            let payload = try message.payload.decoded(as: CallLogSyncPayload.self)
+            callLogStore.update(payload.calls)
+        case "sms.sync":
+            let payload = try message.payload.decoded(as: SmsSyncPayload.self)
+            messageStore.update(payload.threads)
         case "ping":
             try send(type: "pong", payload: EmptyPayload(), on: connection)
         default:
@@ -234,6 +250,13 @@ final class ConnectionServer {
     func sendDismiss(id: String) {
         guard let connection = activeConnection else { return }
         try? send(type: "notification.dismiss", payload: NotificationRemovedPayload(id: id), on: connection)
+    }
+
+    /// Ask the phone to send a text via its own SmsManager. Not separately ack'd — the next
+    /// `sms.sync` from the phone reflects whether it went out.
+    func sendSms(address: String, body: String) {
+        guard let connection = activeConnection else { return }
+        try? send(type: "sms.send", payload: SmsSendPayload(address: address, body: body), on: connection)
     }
 
     private func send<T: Encodable>(type: String, payload: T, on connection: NWConnection) throws {

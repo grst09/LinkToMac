@@ -61,6 +61,7 @@ class MacConnection(
     val state: StateFlow<ConnectionState> = _state
 
     var onNotificationDismissRequested: ((String) -> Unit)? = null
+    var onSmsSendRequested: ((address: String, body: String) -> Unit)? = null
 
     /** Connect using a freshly scanned QR pairing payload. */
     fun connectForPairing(payload: PairingQrPayload) {
@@ -143,6 +144,10 @@ class MacConnection(
                     val payload = json.decodeFromJsonElement<NotificationRemovedPayload>(envelope.payload)
                     onNotificationDismissRequested?.invoke(payload.id)
                 }
+                "sms.send" -> {
+                    val payload = json.decodeFromJsonElement<SmsSendPayload>(envelope.payload)
+                    onSmsSendRequested?.invoke(payload.address, payload.body)
+                }
                 "pong" -> {}
             }
         } catch (e: Exception) {
@@ -216,6 +221,14 @@ class MacConnection(
 
     fun sendNotificationRemoved(id: String) {
         send("notification.removed", json.encodeToJsonElement(NotificationRemovedPayload(id)))
+    }
+
+    fun sendCallLogSync(calls: List<CallLogEntry>) {
+        send("call.sync", json.encodeToJsonElement(CallLogSyncPayload(calls)))
+    }
+
+    fun sendSmsSync(threads: List<SmsThread>) {
+        send("sms.sync", json.encodeToJsonElement(SmsSyncPayload(threads)))
     }
 
     private fun send(type: String, payload: kotlinx.serialization.json.JsonElement) {

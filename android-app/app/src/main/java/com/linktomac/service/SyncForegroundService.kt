@@ -11,6 +11,8 @@ import android.os.Build
 import android.os.IBinder
 import androidx.core.app.NotificationCompat
 import com.linktomac.MainActivity
+import com.linktomac.data.CallLogRepository
+import com.linktomac.data.SmsRepository
 import com.linktomac.net.ConnectionState
 import com.linktomac.net.MacConnection
 import com.linktomac.net.MacDiscovery
@@ -21,6 +23,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
@@ -29,8 +32,9 @@ import java.util.UUID
 
 /**
  * Foreground service that owns the [MacConnection] for the app's lifetime: reconnects via
- * Bonjour/NSD when already paired, relays notification events in both directions, and stays
- * alive so [PhoneNotificationListenerService] always has somewhere to forward events.
+ * Bonjour/NSD when already paired, relays notification events and call log/SMS sync in both
+ * directions, and stays alive so [PhoneNotificationListenerService] always has somewhere to
+ * forward events.
  */
 class SyncForegroundService : Service() {
 
@@ -38,12 +42,17 @@ class SyncForegroundService : Service() {
     private val json = Json { ignoreUnknownKeys = true }
     private lateinit var pairedDeviceStore: PairedDeviceStore
     private lateinit var connection: MacConnection
+    private lateinit var callLogRepository: CallLogRepository
+    private lateinit var smsRepository: SmsRepository
     private var discoveryJob: Job? = null
+    private var syncJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
         instance = this
         pairedDeviceStore = PairedDeviceStore(applicationContext)
+        callLogRepository = CallLogRepository(applicationContext)
+        smsRepository = SmsRepository(applicationContext)
         connection = MacConnection(
             deviceId = localDeviceId(),
             deviceName = Build.MODEL,
@@ -52,8 +61,19 @@ class SyncForegroundService : Service() {
         connection.onNotificationDismissRequested = { id ->
             PhoneNotificationListenerService.instance?.cancel(id)
         }
-        connection.state.onEach { updateNotification(it) }.launchIn(scope)
+        connection.onSmsSendRequested = { address, body -> smsRepository.send(address, body) }
+        connection.state.onEach { state ->
+            updateNotification(state)
+            if (state is ConnectionState.Connected) {
+                syncCallsAndSms()
+            }
+        }.launchIn(scope)
         startForeground(NOTIFICATION_ID, buildNotification(ConnectionState.Idle))
+
+        // No-ops if permission isn't granted yet (see CallLogRepository.observe) — retried in
+        // ACTION_REFRESH_DATA below, which fires right after the user grants access.
+        callLogRepository.observe { scheduleSync() }
+        smsRepository.observe { scheduleSync() }
 
         if (pairedDeviceStore.isPaired) {
             startDiscovery()
@@ -69,6 +89,11 @@ class SyncForegroundService : Service() {
             ACTION_NOTIFICATION_REMOVED -> intent.getStringExtra(EXTRA_NOTIFICATION_ID)?.let {
                 connection.sendNotificationRemoved(it)
             }
+            ACTION_REFRESH_DATA -> {
+                callLogRepository.observe { scheduleSync() }
+                smsRepository.observe { scheduleSync() }
+                syncCallsAndSms()
+            }
         }
         return START_STICKY
     }
@@ -78,9 +103,28 @@ class SyncForegroundService : Service() {
     override fun onDestroy() {
         instance = null
         discoveryJob?.cancel()
+        syncJob?.cancel()
+        callLogRepository.stopObserving()
+        smsRepository.stopObserving()
         connection.close()
         scope.cancel()
         super.onDestroy()
+    }
+
+    private fun syncCallsAndSms() {
+        connection.sendCallLogSync(callLogRepository.readRecent())
+        connection.sendSmsSync(smsRepository.readThreads())
+    }
+
+    /** Debounces bursts of ContentObserver changes (e.g. a batch of messages arriving) into one sync. */
+    private fun scheduleSync() {
+        syncJob?.cancel()
+        syncJob = scope.launch {
+            delay(750)
+            if (connection.state.value is ConnectionState.Connected) {
+                syncCallsAndSms()
+            }
+        }
     }
 
     private fun pairWithQrPayload(qrJson: String) {
@@ -147,6 +191,7 @@ class SyncForegroundService : Service() {
         private const val ACTION_PAIR = "com.linktomac.action.PAIR"
         private const val ACTION_NOTIFICATION_POSTED = "com.linktomac.action.NOTIFICATION_POSTED"
         private const val ACTION_NOTIFICATION_REMOVED = "com.linktomac.action.NOTIFICATION_REMOVED"
+        private const val ACTION_REFRESH_DATA = "com.linktomac.action.REFRESH_DATA"
         private const val EXTRA_QR_PAYLOAD = "qr_payload"
         private const val EXTRA_NOTIFICATION_JSON = "notification_json"
         private const val EXTRA_NOTIFICATION_ID = "notification_id"
@@ -181,6 +226,15 @@ class SyncForegroundService : Service() {
             val intent = Intent(context, SyncForegroundService::class.java).apply {
                 action = ACTION_NOTIFICATION_REMOVED
                 putExtra(EXTRA_NOTIFICATION_ID, key)
+            }
+            context.startForegroundService(intent)
+        }
+
+        /** Call right after the user grants call log/SMS/contacts permissions to sync immediately
+         *  rather than waiting for the next call/message to trigger a ContentObserver callback. */
+        fun refreshCallsAndSms(context: Context) {
+            val intent = Intent(context, SyncForegroundService::class.java).apply {
+                action = ACTION_REFRESH_DATA
             }
             context.startForegroundService(intent)
         }

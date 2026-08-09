@@ -50,17 +50,12 @@ struct MainWindowView: View {
         case .device:
             DeviceStatusView(server: server)
         case .messages:
-            ComingSoonView(
-                title: "Messages",
-                systemImage: "message.fill",
-                detail: "SMS threads and replying from your Mac are planned for Phase 2 — see docs/PLAN.md."
+            MessagesView(
+                store: server.messageStore,
+                onSend: { address, body in server.sendSms(address: address, body: body) }
             )
         case .calls:
-            ComingSoonView(
-                title: "Calls",
-                systemImage: "phone.fill",
-                detail: "Call history is planned for Phase 2 — see docs/PLAN.md."
-            )
+            CallsView(store: server.callLogStore)
         case .photos:
             ComingSoonView(
                 title: "Photos",

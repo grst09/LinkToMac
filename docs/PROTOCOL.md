@@ -70,4 +70,26 @@ Every frame after the handshake is:
 | `notification.dismiss` | Mac → Android | `{id}` (user dismissed on Mac; Android cancels it on the phone) |
 | `ping` / `pong` | either | `{}` — keepalive, sent every 20s; connection considered dead after 45s of silence |
 
-Future phases add `call.*`, `sms.*`, `photo.*`, and `mirror.*` message families on the same envelope.
+## Message types (Phase 2)
+
+Call log and SMS both use a **full-snapshot-on-change** model rather than incremental add/update/remove messages: Android sends its entire recent call log / SMS thread set whenever anything changes (new call, new/read message), capped at a bounded count. This avoids reconciliation logic on either side — the Mac just replaces its local copy — at the cost of re-sending some unchanged data on every update. Reasonable for call log/SMS volumes; would need revisiting if this ever needs to scale to years of history.
+
+| type | direction | payload |
+|---|---|---|
+| `call.sync` | Android → Mac | `{calls: [CallLogEntry]}` — sent once right after `helloAck`, and again on any call log change |
+| `sms.sync` | Android → Mac | `{threads: [SmsThread]}` — sent once right after `helloAck`, and again on any SMS change |
+| `sms.send` | Mac → Android | `{address, body}` — Android sends via `SmsManager`; result isn't separately ack'd, the next `sms.sync` reflects it |
+
+```
+CallLogEntry = {id, number, contactName?, type, date, durationSeconds}
+  type: "incoming" | "outgoing" | "missed" | "rejected" | "blocked" | "voicemail" | "unknown"
+  date: epoch milliseconds
+
+SmsThread = {threadId, address, contactName?, messages: [SmsMessage]}
+SmsMessage = {id, address, body, date, isOutgoing}
+  date: epoch milliseconds
+```
+
+`contactName` is resolved via `ContactsContract.PhoneLookup` when `READ_CONTACTS` is granted; omitted (falls back to the raw number in the UI) otherwise. MMS is out of scope — `SmsThread`/`SmsMessage` only cover the `Telephony.Sms` text-message table.
+
+Future phases add `photo.*` and `mirror.*` message families on the same envelope.

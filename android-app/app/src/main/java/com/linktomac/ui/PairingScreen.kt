@@ -33,10 +33,13 @@ import kotlinx.coroutines.delay
 fun PairingScreen(
     isNotificationAccessGranted: () -> Boolean,
     onRequestNotificationAccess: () -> Unit,
+    isCallsAndMessagesAccessGranted: () -> Boolean,
+    onRequestCallsAndMessagesAccess: () -> Unit,
     onScanRequested: () -> Unit,
     onStartService: () -> Unit
 ) {
     var notificationAccessGranted by remember { mutableStateOf(isNotificationAccessGranted()) }
+    var callsAndMessagesAccessGranted by remember { mutableStateOf(isCallsAndMessagesAccessGranted()) }
     var connectionState by remember { mutableStateOf<ConnectionState>(ConnectionState.Idle) }
 
     LaunchedEffect(Unit) {
@@ -54,6 +57,7 @@ fun PairingScreen(
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationAccessGranted = isNotificationAccessGranted()
+                callsAndMessagesAccessGranted = isCallsAndMessagesAccessGranted()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -85,6 +89,24 @@ fun PairingScreen(
                     Spacer(Modifier.height(12.dp))
                     Button(onClick = onRequestNotificationAccess) {
                         Text("Open Settings")
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+
+        if (!callsAndMessagesAccessGranted) {
+            Card {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Call & message access needed", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "LinkToMac needs permission to read your call log and messages so it can show them on your Mac, and to send texts on your behalf when you reply from there.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = onRequestCallsAndMessagesAccess) {
+                        Text("Grant Access")
                     }
                 }
             }

@@ -29,6 +29,13 @@ class MainActivity : ComponentActivity() {
             if (granted) launchScanner()
         }
 
+    private val callsAndMessagesPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { results ->
+            if (results.values.any { it }) {
+                SyncForegroundService.refreshCallsAndSms(applicationContext)
+            }
+        }
+
     private lateinit var scanLauncher: ActivityResultLauncher<com.journeyapps.barcodescanner.ScanOptions>
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -50,6 +57,8 @@ class MainActivity : ComponentActivity() {
                     PairingScreen(
                         isNotificationAccessGranted = { isNotificationAccessGranted() },
                         onRequestNotificationAccess = { openNotificationAccessSettings() },
+                        isCallsAndMessagesAccessGranted = { isCallsAndMessagesAccessGranted() },
+                        onRequestCallsAndMessagesAccess = { requestCallsAndMessagesAccess() },
                         onScanRequested = { requestCameraAndScan() },
                         onStartService = { SyncForegroundService.start(applicationContext) }
                     )
@@ -77,5 +86,23 @@ class MainActivity : ComponentActivity() {
 
     private fun openNotificationAccessSettings() {
         startActivity(Intent("android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+    }
+
+    /** READ_CONTACTS is excluded from this check — it only improves contact-name resolution
+     *  and call log/SMS access is fully functional (falling back to raw numbers) without it. */
+    private fun isCallsAndMessagesAccessGranted(): Boolean {
+        return listOf(Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS)
+            .all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+    }
+
+    private fun requestCallsAndMessagesAccess() {
+        callsAndMessagesPermissionLauncher.launch(
+            arrayOf(
+                Manifest.permission.READ_CALL_LOG,
+                Manifest.permission.READ_SMS,
+                Manifest.permission.SEND_SMS,
+                Manifest.permission.READ_CONTACTS
+            )
+        )
     }
 }

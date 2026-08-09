@@ -76,3 +76,48 @@ data class PairingQrPayload(
     val pairingToken: String,
     val macDeviceId: String
 )
+
+// Phase 2: call log + SMS
+
+@Serializable
+data class CallLogEntry(
+    val id: String,
+    val number: String,
+    val contactName: String? = null,
+    val type: String, // incoming | outgoing | missed | rejected | blocked | voicemail | unknown
+    val date: Double, // epoch millis
+    val durationSeconds: Int
+)
+
+@Serializable
+data class CallLogSyncPayload(
+    val calls: List<CallLogEntry>
+)
+
+@Serializable
+data class SmsMessage(
+    val id: String,
+    val address: String,
+    val body: String,
+    val date: Double, // epoch millis
+    val isOutgoing: Boolean
+)
+
+@Serializable
+data class SmsThread(
+    val threadId: String,
+    val address: String,
+    val contactName: String? = null,
+    val messages: List<SmsMessage>
+)
+
+@Serializable
+data class SmsSyncPayload(
+    val threads: List<SmsThread>
+)
+
+@Serializable
+data class SmsSendPayload(
+    val address: String,
+    val body: String
+)
