@@ -9,17 +9,22 @@ import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.IBinder
+import android.util.Base64
 import androidx.core.app.NotificationCompat
 import com.linktomac.MainActivity
+import com.linktomac.data.BatteryStatusRepository
 import com.linktomac.data.CallLogRepository
+import com.linktomac.data.PhotoRepository
 import com.linktomac.data.SmsRepository
 import com.linktomac.net.ConnectionState
+import com.linktomac.net.DeviceStatusPayload
 import com.linktomac.net.MacConnection
 import com.linktomac.net.MacDiscovery
 import com.linktomac.net.NotificationPostedPayload
 import com.linktomac.net.PairingQrPayload
 import com.linktomac.storage.PairedDeviceStore
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
@@ -44,8 +49,11 @@ class SyncForegroundService : Service() {
     private lateinit var connection: MacConnection
     private lateinit var callLogRepository: CallLogRepository
     private lateinit var smsRepository: SmsRepository
+    private lateinit var photoRepository: PhotoRepository
+    private lateinit var batteryStatusRepository: BatteryStatusRepository
     private var discoveryJob: Job? = null
     private var syncJob: Job? = null
+    private var photoLibraryChangedJob: Job? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -53,6 +61,8 @@ class SyncForegroundService : Service() {
         pairedDeviceStore = PairedDeviceStore(applicationContext)
         callLogRepository = CallLogRepository(applicationContext)
         smsRepository = SmsRepository(applicationContext)
+        photoRepository = PhotoRepository(applicationContext)
+        batteryStatusRepository = BatteryStatusRepository(applicationContext)
         connection = MacConnection(
             deviceId = localDeviceId(),
             deviceName = Build.MODEL,
@@ -62,18 +72,34 @@ class SyncForegroundService : Service() {
             PhoneNotificationListenerService.instance?.cancel(id)
         }
         connection.onSmsSendRequested = { address, body -> smsRepository.send(address, body) }
+        connection.onPhotoPageRequested = { offset, limit ->
+            scope.launch(Dispatchers.IO) {
+                val (photos, hasMore) = photoRepository.readPage(offset, limit)
+                connection.sendPhotoPage(photos, hasMore)
+            }
+        }
+        connection.onPhotoFullRequested = { id ->
+            scope.launch(Dispatchers.IO) {
+                photoRepository.readFull(id)?.let { (bytes, mimeType) ->
+                    connection.sendPhotoFull(id, Base64.encodeToString(bytes, Base64.NO_WRAP), mimeType)
+                }
+            }
+        }
         connection.state.onEach { state ->
             updateNotification(state)
             if (state is ConnectionState.Connected) {
                 syncCallsAndSms()
+                batteryStatusRepository.readCurrent()?.let { connection.sendDeviceStatus(it) }
             }
         }.launchIn(scope)
+        batteryStatusRepository.observe { connection.sendDeviceStatus(it) }
         startForeground(NOTIFICATION_ID, buildNotification(ConnectionState.Idle))
 
         // No-ops if permission isn't granted yet (see CallLogRepository.observe) — retried in
         // ACTION_REFRESH_DATA below, which fires right after the user grants access.
         callLogRepository.observe { scheduleSync() }
         smsRepository.observe { scheduleSync() }
+        photoRepository.observe { schedulePhotoLibraryChangedNotification() }
 
         if (pairedDeviceStore.isPaired) {
             startDiscovery()
@@ -94,6 +120,7 @@ class SyncForegroundService : Service() {
                 smsRepository.observe { scheduleSync() }
                 syncCallsAndSms()
             }
+            ACTION_REFRESH_PHOTOS -> photoRepository.observe { schedulePhotoLibraryChangedNotification() }
         }
         return START_STICKY
     }
@@ -104,8 +131,11 @@ class SyncForegroundService : Service() {
         instance = null
         discoveryJob?.cancel()
         syncJob?.cancel()
+        photoLibraryChangedJob?.cancel()
         callLogRepository.stopObserving()
         smsRepository.stopObserving()
+        photoRepository.stopObserving()
+        batteryStatusRepository.stopObserving()
         connection.close()
         scope.cancel()
         super.onDestroy()
@@ -123,6 +153,17 @@ class SyncForegroundService : Service() {
             delay(750)
             if (connection.state.value is ConnectionState.Connected) {
                 syncCallsAndSms()
+            }
+        }
+    }
+
+    /** Debounces bursts of MediaStore changes (e.g. importing a batch of photos) into one notification. */
+    private fun schedulePhotoLibraryChangedNotification() {
+        photoLibraryChangedJob?.cancel()
+        photoLibraryChangedJob = scope.launch {
+            delay(750)
+            if (connection.state.value is ConnectionState.Connected) {
+                connection.sendPhotoLibraryChanged()
             }
         }
     }
@@ -192,6 +233,7 @@ class SyncForegroundService : Service() {
         private const val ACTION_NOTIFICATION_POSTED = "com.linktomac.action.NOTIFICATION_POSTED"
         private const val ACTION_NOTIFICATION_REMOVED = "com.linktomac.action.NOTIFICATION_REMOVED"
         private const val ACTION_REFRESH_DATA = "com.linktomac.action.REFRESH_DATA"
+        private const val ACTION_REFRESH_PHOTOS = "com.linktomac.action.REFRESH_PHOTOS"
         private const val EXTRA_QR_PAYLOAD = "qr_payload"
         private const val EXTRA_NOTIFICATION_JSON = "notification_json"
         private const val EXTRA_NOTIFICATION_ID = "notification_id"
@@ -235,6 +277,15 @@ class SyncForegroundService : Service() {
         fun refreshCallsAndSms(context: Context) {
             val intent = Intent(context, SyncForegroundService::class.java).apply {
                 action = ACTION_REFRESH_DATA
+            }
+            context.startForegroundService(intent)
+        }
+
+        /** Call right after the user grants photo access, so library-change notifications start
+         *  working without waiting for the service to restart. */
+        fun refreshPhotoObserver(context: Context) {
+            val intent = Intent(context, SyncForegroundService::class.java).apply {
+                action = ACTION_REFRESH_PHOTOS
             }
             context.startForegroundService(intent)
         }

@@ -103,6 +103,39 @@ struct SmsSendPayload: Codable {
     let body: String
 }
 
+// MARK: - Photo + device status payloads (Phase 3)
+
+struct PhotoThumbnail: Codable, Identifiable {
+    let id: String
+    let takenAt: Double // epoch millis
+    let thumbnailBase64: String
+}
+
+struct PhotoPageRequestPayload: Codable {
+    let offset: Int
+    let limit: Int
+}
+
+struct PhotoPagePayload: Codable {
+    let photos: [PhotoThumbnail]
+    let hasMore: Bool
+}
+
+struct PhotoFullRequestPayload: Codable {
+    let id: String
+}
+
+struct PhotoFullPayload: Codable {
+    let id: String
+    let dataBase64: String
+    let mimeType: String
+}
+
+struct DeviceStatusPayload: Codable {
+    let batteryPercent: Int
+    let isCharging: Bool
+}
+
 /// Minimal untyped JSON box so `Message.payload` can hold any of the payload structs above
 /// without a giant enum of coding keys. Encoded/decoded via JSONSerialization under the hood.
 enum JSONValue: Codable {

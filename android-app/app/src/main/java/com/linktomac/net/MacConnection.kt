@@ -62,6 +62,8 @@ class MacConnection(
 
     var onNotificationDismissRequested: ((String) -> Unit)? = null
     var onSmsSendRequested: ((address: String, body: String) -> Unit)? = null
+    var onPhotoPageRequested: ((offset: Int, limit: Int) -> Unit)? = null
+    var onPhotoFullRequested: ((id: String) -> Unit)? = null
 
     /** Connect using a freshly scanned QR pairing payload. */
     fun connectForPairing(payload: PairingQrPayload) {
@@ -148,6 +150,14 @@ class MacConnection(
                     val payload = json.decodeFromJsonElement<SmsSendPayload>(envelope.payload)
                     onSmsSendRequested?.invoke(payload.address, payload.body)
                 }
+                "photo.pageRequest" -> {
+                    val payload = json.decodeFromJsonElement<PhotoPageRequestPayload>(envelope.payload)
+                    onPhotoPageRequested?.invoke(payload.offset, payload.limit)
+                }
+                "photo.fullRequest" -> {
+                    val payload = json.decodeFromJsonElement<PhotoFullRequestPayload>(envelope.payload)
+                    onPhotoFullRequested?.invoke(payload.id)
+                }
                 "pong" -> {}
             }
         } catch (e: Exception) {
@@ -229,6 +239,23 @@ class MacConnection(
 
     fun sendSmsSync(threads: List<SmsThread>) {
         send("sms.sync", json.encodeToJsonElement(SmsSyncPayload(threads)))
+    }
+
+    fun sendPhotoPage(photos: List<PhotoThumbnail>, hasMore: Boolean) {
+        send("photo.page", json.encodeToJsonElement(PhotoPagePayload(photos, hasMore)))
+    }
+
+    fun sendPhotoFull(id: String, dataBase64: String, mimeType: String) {
+        send("photo.full", json.encodeToJsonElement(PhotoFullPayload(id, dataBase64, mimeType)))
+    }
+
+    /** Tells the Mac a photo was added/deleted so it can reset and re-page from 0. */
+    fun sendPhotoLibraryChanged() {
+        send("photo.libraryChanged", json.encodeToJsonElement(EmptyPayload()))
+    }
+
+    fun sendDeviceStatus(payload: DeviceStatusPayload) {
+        send("device.status", json.encodeToJsonElement(payload))
     }
 
     private fun send(type: String, payload: kotlinx.serialization.json.JsonElement) {

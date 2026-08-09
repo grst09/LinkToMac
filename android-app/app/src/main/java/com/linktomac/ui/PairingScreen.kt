@@ -35,11 +35,14 @@ fun PairingScreen(
     onRequestNotificationAccess: () -> Unit,
     isCallsAndMessagesAccessGranted: () -> Boolean,
     onRequestCallsAndMessagesAccess: () -> Unit,
+    isPhotoAccessGranted: () -> Boolean,
+    onRequestPhotoAccess: () -> Unit,
     onScanRequested: () -> Unit,
     onStartService: () -> Unit
 ) {
     var notificationAccessGranted by remember { mutableStateOf(isNotificationAccessGranted()) }
     var callsAndMessagesAccessGranted by remember { mutableStateOf(isCallsAndMessagesAccessGranted()) }
+    var photoAccessGranted by remember { mutableStateOf(isPhotoAccessGranted()) }
     var connectionState by remember { mutableStateOf<ConnectionState>(ConnectionState.Idle) }
 
     LaunchedEffect(Unit) {
@@ -58,6 +61,7 @@ fun PairingScreen(
             if (event == Lifecycle.Event.ON_RESUME) {
                 notificationAccessGranted = isNotificationAccessGranted()
                 callsAndMessagesAccessGranted = isCallsAndMessagesAccessGranted()
+                photoAccessGranted = isPhotoAccessGranted()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
@@ -106,6 +110,24 @@ fun PairingScreen(
                     )
                     Spacer(Modifier.height(12.dp))
                     Button(onClick = onRequestCallsAndMessagesAccess) {
+                        Text("Grant Access")
+                    }
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+        }
+
+        if (!photoAccessGranted) {
+            Card {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Photo access needed", style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(8.dp))
+                    Text(
+                        "LinkToMac needs permission to read your photos so you can browse them from your Mac.",
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Button(onClick = onRequestPhotoAccess) {
                         Text("Grant Access")
                     }
                 }

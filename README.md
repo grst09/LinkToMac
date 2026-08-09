@@ -6,7 +6,7 @@ Android-only by design: iOS does not expose the APIs (notification mirroring, ca
 
 ## Status
 
-**Phase 1 and Phase 2 complete and verified end-to-end on real hardware:** device pairing, LAN discovery/reconnect, an encrypted session channel, native macOS notification mirroring (Android → Mac), call log sync, SMS thread sync, and replying to texts from the Mac (Mac → Android send). The main app window has Phone Link-style sidebar navigation — Notifications, Calls, Messages, and This Device are functional; Photos/Screen Mirroring remain placeholders for their respective phases. Next up: Phase 3 (photos).
+**Phases 1–3 complete and verified end-to-end on real hardware:** device pairing, LAN discovery/reconnect, an encrypted session channel, native macOS notification mirroring, call log sync, SMS thread sync + reply-from-Mac, and a photo grid (month-grouped, paginated, on-demand full-res, live refresh when the phone's library changes). The main app window has Phone Link-style sidebar navigation — Notifications, Calls, Messages, Photos, and This Device are functional; Files, Contacts, and Screen Mirroring are placeholders (Screen Mirroring is on the roadmap as Phase 4; Files/Contacts aren't currently planned, just present for visual parity with a reference design). Next up: Phase 4 (screen mirroring).
 
 See [`docs/PLAN.md`](docs/PLAN.md) for the full roadmap and [`docs/PROTOCOL.md`](docs/PROTOCOL.md) for the wire protocol.
 

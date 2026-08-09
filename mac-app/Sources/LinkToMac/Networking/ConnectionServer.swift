@@ -20,6 +20,7 @@ struct PairingQRPayload: Codable {
 final class ConnectionServer {
     static let port: UInt16 = 53821
     static let serviceType = "_linktomac._tcp"
+    static let defaultPhotoPageSize = 30
 
     enum ConnectionState: Equatable {
         case idle
@@ -36,6 +37,8 @@ final class ConnectionServer {
     let notificationStore: NotificationStore
     let callLogStore: CallLogStore
     let messageStore: MessageStore
+    let photoStore: PhotoStore
+    let deviceStatusStore: DeviceStatusStore
 
     private var listener: NWListener?
     private var activeConnection: NWConnection?
@@ -47,13 +50,17 @@ final class ConnectionServer {
         pairedDeviceStore: PairedDeviceStore,
         notificationStore: NotificationStore,
         callLogStore: CallLogStore,
-        messageStore: MessageStore
+        messageStore: MessageStore,
+        photoStore: PhotoStore,
+        deviceStatusStore: DeviceStatusStore
     ) {
         self.identity = identity
         self.pairedDeviceStore = pairedDeviceStore
         self.notificationStore = notificationStore
         self.callLogStore = callLogStore
         self.messageStore = messageStore
+        self.photoStore = photoStore
+        self.deviceStatusStore = deviceStatusStore
     }
 
     func start() {
@@ -236,6 +243,20 @@ final class ConnectionServer {
         case "sms.sync":
             let payload = try message.payload.decoded(as: SmsSyncPayload.self)
             messageStore.update(payload.threads)
+        case "photo.page":
+            let payload = try message.payload.decoded(as: PhotoPagePayload.self)
+            photoStore.appendPage(payload.photos, hasMore: payload.hasMore)
+        case "photo.full":
+            let payload = try message.payload.decoded(as: PhotoFullPayload.self)
+            if let data = Data(base64Encoded: payload.dataBase64) {
+                photoStore.setFullImage(id: payload.id, data: data)
+            }
+        case "device.status":
+            let payload = try message.payload.decoded(as: DeviceStatusPayload.self)
+            deviceStatusStore.update(payload)
+        case "photo.libraryChanged":
+            photoStore.invalidate()
+            requestPhotoPage(offset: 0, limit: Self.defaultPhotoPageSize)
         case "ping":
             try send(type: "pong", payload: EmptyPayload(), on: connection)
         default:
@@ -257,6 +278,19 @@ final class ConnectionServer {
     func sendSms(address: String, body: String) {
         guard let connection = activeConnection else { return }
         try? send(type: "sms.send", payload: SmsSendPayload(address: address, body: body), on: connection)
+    }
+
+    /// Requests the next page of photo thumbnails. Caller (PhotosView) is responsible for not
+    /// firing another request while one is already in flight — see docs/PROTOCOL.md.
+    func requestPhotoPage(offset: Int, limit: Int) {
+        guard let connection = activeConnection else { return }
+        photoStore.beginLoadingMore()
+        try? send(type: "photo.pageRequest", payload: PhotoPageRequestPayload(offset: offset, limit: limit), on: connection)
+    }
+
+    func requestPhotoFull(id: String) {
+        guard let connection = activeConnection else { return }
+        try? send(type: "photo.fullRequest", payload: PhotoFullRequestPayload(id: id), on: connection)
     }
 
     private func send<T: Encodable>(type: String, payload: T, on connection: NWConnection) throws {

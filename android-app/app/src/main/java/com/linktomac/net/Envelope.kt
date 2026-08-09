@@ -16,6 +16,9 @@ data class Envelope(
 )
 
 @Serializable
+class EmptyPayload
+
+@Serializable
 data class HelloPayload(
     val androidPublicKey: String,
     val pairingToken: String? = null,
@@ -120,4 +123,43 @@ data class SmsSyncPayload(
 data class SmsSendPayload(
     val address: String,
     val body: String
+)
+
+// Phase 3: photos + device status
+
+@Serializable
+data class PhotoThumbnail(
+    val id: String,
+    val takenAt: Double, // epoch millis
+    val thumbnailBase64: String
+)
+
+@Serializable
+data class PhotoPageRequestPayload(
+    val offset: Int,
+    val limit: Int
+)
+
+@Serializable
+data class PhotoPagePayload(
+    val photos: List<PhotoThumbnail>,
+    val hasMore: Boolean
+)
+
+@Serializable
+data class PhotoFullRequestPayload(
+    val id: String
+)
+
+@Serializable
+data class PhotoFullPayload(
+    val id: String,
+    val dataBase64: String,
+    val mimeType: String
+)
+
+@Serializable
+data class DeviceStatusPayload(
+    val batteryPercent: Int,
+    val isCharging: Boolean
 )

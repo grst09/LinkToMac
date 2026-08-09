@@ -12,6 +12,13 @@ struct DeviceStatusView: View {
                     .font(.title2)
                 Text("Connected and syncing.")
                     .foregroundStyle(.secondary)
+                if let percent = server.deviceStatusStore.batteryPercent {
+                    Label(
+                        "\(percent)%\(server.deviceStatusStore.isCharging ? " (charging)" : "")",
+                        systemImage: BatteryIcon.symbolName(percent: percent, isCharging: server.deviceStatusStore.isCharging)
+                    )
+                    .foregroundStyle(server.deviceStatusStore.isCharging ? .green : .secondary)
+                }
             case .failed(let message):
                 Label("Not connected", systemImage: "exclamationmark.triangle.fill")
                     .foregroundStyle(.red)

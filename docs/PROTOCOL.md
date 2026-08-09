@@ -92,4 +92,31 @@ SmsMessage = {id, address, body, date, isOutgoing}
 
 `contactName` is resolved via `ContactsContract.PhoneLookup` when `READ_CONTACTS` is granted; omitted (falls back to the raw number in the UI) otherwise. MMS is out of scope — `SmsThread`/`SmsMessage` only cover the `Telephony.Sms` text-message table.
 
-Future phases add `photo.*` and `mirror.*` message families on the same envelope.
+## Message types (Phase 3)
+
+Photos use a **paginated request/response** model instead — full-snapshot doesn't work once a library can hold thousands of items. The Mac drives paging explicitly. Full-resolution images are fetched on demand, one at a time, only when the user opens a photo.
+
+There's no request-id/correlation scheme: each side keeps at most one photo request in flight (the Mac disables "Load More" / photo taps while a response is pending), so responses are matched to requests by ordering rather than an explicit id. `photo.full`'s echoed `id` lets the Mac at least discard a stale response if the user already moved on to a different photo.
+
+Unlike full-resolution fetches, library changes (a photo added or deleted) *are* pushed — Android observes `MediaStore.Images.Media.EXTERNAL_CONTENT_URI` (debounced, same pattern as the call log/SMS `ContentObserver`s) and sends `photo.libraryChanged` with no payload. The Mac's response is a hard reset: clear whatever's loaded and re-request from offset 0. This loses scroll position on every change, which is a real UX cost, but avoids diffing thumbnail ids against a library that can be thousands of items long — correctness over polish for a first version.
+
+| type | direction | payload |
+|---|---|---|
+| `photo.pageRequest` | Mac → Android | `{offset, limit}` |
+| `photo.page` | Android → Mac | `{photos: [PhotoThumbnail], hasMore}` |
+| `photo.fullRequest` | Mac → Android | `{id}` |
+| `photo.full` | Android → Mac | `{id, dataBase64, mimeType}` |
+| `photo.libraryChanged` | Android → Mac | `{}` — debounced; Mac resets and re-pages from 0 |
+| `device.status` | Android → Mac | `{batteryPercent, isCharging}` — sent once right after `helloAck`, and again whenever `ACTION_BATTERY_CHANGED` fires |
+
+```
+PhotoThumbnail = {id, takenAt, thumbnailBase64}
+  id: the MediaStore row id, as a string
+  takenAt: epoch milliseconds
+  thumbnailBase64: JPEG, longest edge ~300px, quality ~60 — kept small since a page (30 photos)
+    ships in one WebSocket frame
+```
+
+Photo queries also avoid `LIMIT`/`OFFSET` in the SQL sort order, for the same OEM-provider-compatibility reason as call log/SMS (see PLAN.md) — offset/limit are applied in Kotlin after fetching the full sorted id list.
+
+Future phases add `mirror.*` message family on the same envelope.

@@ -36,6 +36,13 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    private val photoPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) {
+                SyncForegroundService.refreshPhotoObserver(applicationContext)
+            }
+        }
+
     private lateinit var scanLauncher: ActivityResultLauncher<com.journeyapps.barcodescanner.ScanOptions>
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -59,6 +66,8 @@ class MainActivity : ComponentActivity() {
                         onRequestNotificationAccess = { openNotificationAccessSettings() },
                         isCallsAndMessagesAccessGranted = { isCallsAndMessagesAccessGranted() },
                         onRequestCallsAndMessagesAccess = { requestCallsAndMessagesAccess() },
+                        isPhotoAccessGranted = { isPhotoAccessGranted() },
+                        onRequestPhotoAccess = { requestPhotoAccess() },
                         onScanRequested = { requestCameraAndScan() },
                         onStartService = { SyncForegroundService.start(applicationContext) }
                     )
@@ -104,5 +113,20 @@ class MainActivity : ComponentActivity() {
                 Manifest.permission.READ_CONTACTS
             )
         )
+    }
+
+    /** READ_MEDIA_IMAGES replaced READ_EXTERNAL_STORAGE for media access on API 33+. */
+    private fun photoPermission(): String =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            Manifest.permission.READ_MEDIA_IMAGES
+        } else {
+            Manifest.permission.READ_EXTERNAL_STORAGE
+        }
+
+    private fun isPhotoAccessGranted(): Boolean =
+        checkSelfPermission(photoPermission()) == PackageManager.PERMISSION_GRANTED
+
+    private fun requestPhotoAccess() {
+        photoPermissionLauncher.launch(photoPermission())
     }
 }
