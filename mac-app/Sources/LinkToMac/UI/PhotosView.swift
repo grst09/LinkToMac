@@ -9,6 +9,27 @@ struct PhotosView: View {
 
     var body: some View {
         let store = server.photoStore
+        VStack(spacing: 0) {
+            SectionHeaderView(
+                icon: "photo.on.rectangle.angled",
+                iconColor: .purple,
+                title: "Photos",
+                subtitle: "\(store.photos.count) photo\(store.photos.count == 1 ? "" : "s")\(store.hasMore ? "+" : "")"
+            )
+            photoGrid(store: store)
+        }
+        .task {
+            if store.photos.isEmpty {
+                loadNextPage()
+            }
+        }
+        .sheet(item: $selectedPhoto) { photo in
+            PhotoDetailView(photo: photo, server: server)
+        }
+    }
+
+    @ViewBuilder
+    private func photoGrid(store: PhotoStore) -> some View {
         ScrollView {
             if store.photos.isEmpty && !store.isLoadingMore {
                 VStack(spacing: 8) {
@@ -57,14 +78,6 @@ struct PhotosView: View {
                 }
                 .padding(.vertical)
             }
-        }
-        .task {
-            if store.photos.isEmpty {
-                loadNextPage()
-            }
-        }
-        .sheet(item: $selectedPhoto) { photo in
-            PhotoDetailView(photo: photo, server: server)
         }
     }
 

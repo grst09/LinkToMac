@@ -3,20 +3,43 @@ import SwiftUI
 struct CallsView: View {
     var store: CallLogStore
 
+    @State private var searchText = ""
+
     var body: some View {
-        if store.calls.isEmpty {
-            VStack(spacing: 8) {
-                Image(systemName: "phone")
-                    .font(.system(size: 32))
+        VStack(spacing: 0) {
+            SectionHeaderView(
+                icon: "phone.fill",
+                iconColor: .green,
+                title: "Calls",
+                subtitle: "\(store.calls.count) call\(store.calls.count == 1 ? "" : "s")"
+            )
+            SearchBarView(text: $searchText, prompt: "Search calls")
+            if store.calls.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "phone")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.secondary)
+                    Text("No call history yet")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if filteredCalls.isEmpty {
+                Text("No matching calls")
                     .foregroundStyle(.secondary)
-                Text("No call history yet")
-                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(filteredCalls) { call in
+                    CallRowView(call: call)
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            List(store.calls) { call in
-                CallRowView(call: call)
-            }
+        }
+    }
+
+    private var filteredCalls: [CallLogEntry] {
+        guard !searchText.isEmpty else { return store.calls }
+        return store.calls.filter { call in
+            (call.contactName ?? "").localizedCaseInsensitiveContains(searchText)
+                || call.number.localizedCaseInsensitiveContains(searchText)
         }
     }
 }
@@ -44,7 +67,7 @@ private struct CallRowView: View {
                 }
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, 8)
     }
 
     private var iconName: String {

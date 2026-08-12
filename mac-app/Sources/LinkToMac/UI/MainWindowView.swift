@@ -47,6 +47,7 @@ struct MainWindowView: View {
 
                 List(SidebarSection.navigationItems, selection: $selection) { section in
                     Label(section.rawValue, systemImage: section.systemImage)
+                        .padding(.vertical, 4)
                         .tag(section)
                 }
 
@@ -65,7 +66,7 @@ struct MainWindowView: View {
             .navigationSplitViewColumnWidth(min: 200, ideal: 220)
         } detail: {
             detailView
-                .navigationTitle(selection?.rawValue ?? "LinkToMac")
+                .navigationTitle("LinkToMac")
         }
     }
 

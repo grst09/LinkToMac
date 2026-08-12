@@ -4,25 +4,49 @@ struct NotificationListView: View {
     var notifications: [NotificationPostedPayload]
     var onDismiss: (String) -> Void
 
+    @State private var searchText = ""
+
     var body: some View {
-        if notifications.isEmpty {
-            VStack(spacing: 8) {
-                Image(systemName: "bell.slash")
-                    .font(.system(size: 32))
-                    .foregroundStyle(.secondary)
-                Text("No notifications yet")
-                    .foregroundStyle(.secondary)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        } else {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 8) {
-                    ForEach(notifications) { notification in
-                        NotificationRowView(notification: notification, onDismiss: { onDismiss(notification.id) })
-                    }
+        VStack(spacing: 0) {
+            SectionHeaderView(
+                icon: "bell.fill",
+                iconColor: .orange,
+                title: "Notifications",
+                subtitle: "\(notifications.count) notification\(notifications.count == 1 ? "" : "s")"
+            )
+            SearchBarView(text: $searchText, prompt: "Search notifications")
+            if notifications.isEmpty {
+                VStack(spacing: 8) {
+                    Image(systemName: "bell.slash")
+                        .font(.system(size: 32))
+                        .foregroundStyle(.secondary)
+                    Text("No notifications yet")
+                        .foregroundStyle(.secondary)
                 }
-                .padding()
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if filteredNotifications.isEmpty {
+                Text("No matching notifications")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ScrollView {
+                    LazyVStack(alignment: .leading, spacing: 8) {
+                        ForEach(filteredNotifications) { notification in
+                            NotificationRowView(notification: notification, onDismiss: { onDismiss(notification.id) })
+                        }
+                    }
+                    .padding()
+                }
             }
+        }
+    }
+
+    private var filteredNotifications: [NotificationPostedPayload] {
+        guard !searchText.isEmpty else { return notifications }
+        return notifications.filter { notification in
+            notification.appName.localizedCaseInsensitiveContains(searchText)
+                || notification.title.localizedCaseInsensitiveContains(searchText)
+                || notification.text.localizedCaseInsensitiveContains(searchText)
         }
     }
 }

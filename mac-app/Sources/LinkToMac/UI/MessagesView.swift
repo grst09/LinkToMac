@@ -5,11 +5,21 @@ struct MessagesView: View {
     var onSend: (String, String) -> Void
 
     @State private var selectedThreadId: String?
+    @State private var searchText = ""
 
     var body: some View {
         HStack(spacing: 0) {
-            threadList
-                .frame(width: 260)
+            VStack(spacing: 0) {
+                SectionHeaderView(
+                    icon: "message.fill",
+                    iconColor: .blue,
+                    title: "Messages",
+                    subtitle: "\(store.threads.count) conversation\(store.threads.count == 1 ? "" : "s")"
+                )
+                SearchBarView(text: $searchText, prompt: "Search conversations")
+                threadList
+            }
+            .frame(width: 260)
             Divider()
             if let thread = selectedThread {
                 ConversationView(thread: thread, onSend: { body in onSend(thread.address, body) })
@@ -30,6 +40,15 @@ struct MessagesView: View {
         store.threads.first { $0.threadId == selectedThreadId }
     }
 
+    private var filteredThreads: [SmsThread] {
+        guard !searchText.isEmpty else { return store.threads }
+        return store.threads.filter { thread in
+            (thread.contactName ?? "").localizedCaseInsensitiveContains(searchText)
+                || thread.address.localizedCaseInsensitiveContains(searchText)
+                || (thread.messages.last?.body ?? "").localizedCaseInsensitiveContains(searchText)
+        }
+    }
+
     private var threadList: some View {
         Group {
             if store.threads.isEmpty {
@@ -41,8 +60,12 @@ struct MessagesView: View {
                         .foregroundStyle(.secondary)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if filteredThreads.isEmpty {
+                Text("No matching conversations")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
-                List(store.threads, selection: $selectedThreadId) { thread in
+                List(filteredThreads, selection: $selectedThreadId) { thread in
                     ThreadRowView(thread: thread)
                         .tag(thread.threadId)
                 }
@@ -55,13 +78,13 @@ private struct ThreadRowView: View {
     let thread: SmsThread
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(thread.contactName ?? thread.address).font(.body.bold())
             if let last = thread.messages.last {
                 Text(last.body).font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
         }
-        .padding(.vertical, 2)
+        .padding(.vertical, 6)
     }
 }
 
