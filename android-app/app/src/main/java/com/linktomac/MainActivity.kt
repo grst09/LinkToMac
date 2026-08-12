@@ -2,6 +2,7 @@ package com.linktomac
 
 import android.Manifest
 import android.app.Activity
+import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
@@ -190,6 +191,32 @@ class MainActivity : ComponentActivity() {
 
     private fun openAccessibilitySettings() {
         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    }
+
+    // Android only allows reading clipboard content while the app is focused (or is the
+    // default IME), so this is the only reliable place to pick up local copies — a background
+    // service can write the clipboard freely but can't read it. See SyncForegroundService's
+    // reportLocalClipboardText/applyRemoteClipboard for the sync-loop-prevention half of this.
+    private val clipboardManager by lazy { getSystemService(ClipboardManager::class.java) }
+    private val clipboardListener = ClipboardManager.OnPrimaryClipChangedListener { checkClipboard() }
+
+    override fun onResume() {
+        super.onResume()
+        clipboardManager.addPrimaryClipChangedListener(clipboardListener)
+        checkClipboard()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        clipboardManager.removePrimaryClipChangedListener(clipboardListener)
+    }
+
+    private fun checkClipboard() {
+        val clip = clipboardManager.primaryClip ?: return
+        if (clip.itemCount == 0) return
+        val text = clip.getItemAt(0).coerceToText(this)?.toString() ?: return
+        if (text.isBlank()) return
+        SyncForegroundService.reportLocalClipboardText(text)
     }
 
     companion object {

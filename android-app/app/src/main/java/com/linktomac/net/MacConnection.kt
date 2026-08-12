@@ -71,6 +71,7 @@ class MacConnection(
     var onMirrorSwipeRequested: ((startX: Double, startY: Double, endX: Double, endY: Double, durationMs: Int) -> Unit)? = null
     var onMirrorKeyRequested: ((action: String) -> Unit)? = null
     var onMirrorTextInputRequested: ((text: String) -> Unit)? = null
+    var onClipboardUpdateReceived: ((text: String) -> Unit)? = null
 
     /** Connect using a freshly scanned QR pairing payload. */
     fun connectForPairing(payload: PairingQrPayload) {
@@ -183,6 +184,10 @@ class MacConnection(
                     val payload = json.decodeFromJsonElement<MirrorTextInputPayload>(envelope.payload)
                     onMirrorTextInputRequested?.invoke(payload.text)
                 }
+                "clipboard.update" -> {
+                    val payload = json.decodeFromJsonElement<ClipboardUpdatePayload>(envelope.payload)
+                    onClipboardUpdateReceived?.invoke(payload.text)
+                }
                 "pong" -> {}
             }
         } catch (e: Exception) {
@@ -290,6 +295,11 @@ class MacConnection(
 
     fun sendMirrorStopped(reason: String) {
         send("mirror.stopped", json.encodeToJsonElement(MirrorStoppedPayload(reason)))
+    }
+
+    fun sendClipboardUpdate(text: String) {
+        val payload = ClipboardUpdatePayload(text = text, sourceDeviceId = deviceId, timestamp = System.currentTimeMillis().toDouble())
+        send("clipboard.update", json.encodeToJsonElement(payload))
     }
 
     /** Binary WebSocket frame, not the JSON envelope — see docs/PROTOCOL.md's Phase 4 binary

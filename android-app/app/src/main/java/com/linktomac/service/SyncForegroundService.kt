@@ -5,6 +5,8 @@ import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.app.Service
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -54,6 +56,11 @@ class SyncForegroundService : Service() {
     private var discoveryJob: Job? = null
     private var syncJob: Job? = null
     private var photoLibraryChangedJob: Job? = null
+
+    /** Tracks the last text synced in either direction so a remote update we just wrote to the
+     *  system clipboard doesn't get read back and echoed to the Mac as if it were a new local
+     *  copy — see [applyRemoteClipboard] and [reportLocalClipboardText]. */
+    private var lastSyncedClipboardText: String? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -110,6 +117,7 @@ class SyncForegroundService : Service() {
         connection.onMirrorTextInputRequested = { text ->
             InputInjectionAccessibilityService.instance?.pasteText(text)
         }
+        connection.onClipboardUpdateReceived = { text -> applyRemoteClipboard(text) }
         connection.state.onEach { state ->
             updateNotification(state)
             if (state is ConnectionState.Connected) {
@@ -170,6 +178,17 @@ class SyncForegroundService : Service() {
         connection.close()
         scope.cancel()
         super.onDestroy()
+    }
+
+    /** Writing to the clipboard, unlike reading it, isn't restricted while backgrounded — this
+     *  runs the moment a `clipboard.update` arrives, no foreground Activity required. The item
+     *  then shows up via the normal long-press "Paste" option in any text field. */
+    private fun applyRemoteClipboard(text: String) {
+        if (text == lastSyncedClipboardText) return
+        lastSyncedClipboardText = text
+        val clipboardManager = getSystemService(ClipboardManager::class.java)
+        clipboardManager.setPrimaryClip(ClipData.newPlainText("LinkToMac", text))
+        android.util.Log.d("SyncForegroundService", "clipboard.update applied from Mac: ${text.take(40)}")
     }
 
     private fun syncCallsAndSms() {
@@ -332,6 +351,20 @@ class SyncForegroundService : Service() {
                 action = ACTION_REFRESH_PHOTOS
             }
             context.startForegroundService(intent)
+        }
+
+        /** Reading the clipboard is only reliable while the app is focused (Android 10+ blocks
+         *  background reads for anything but the default IME) — see MainActivity's
+         *  OnPrimaryClipChangedListener, registered only across onResume/onPause. Same
+         *  loop-prevention check as [applyRemoteClipboard], against the same service instance. */
+        fun reportLocalClipboardText(text: String) {
+            instance?.let { svc ->
+                if (text.isNotBlank() && text != svc.lastSyncedClipboardText) {
+                    svc.lastSyncedClipboardText = text
+                    svc.connection.sendClipboardUpdate(text)
+                    android.util.Log.d("SyncForegroundService", "clipboard.update sent to Mac: ${text.take(40)}")
+                }
+            }
         }
 
         /** Forces a fresh Bonjour/NSD discovery attempt using the stored pairing credentials —

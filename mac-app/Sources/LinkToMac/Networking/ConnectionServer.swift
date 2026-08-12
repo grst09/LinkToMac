@@ -2,6 +2,7 @@ import Foundation
 import Network
 import CryptoKit
 import Observation
+import Darwin
 
 /// Deliberately minimal: the Mac's public key is *not* included here. Cramming a 65-byte
 /// P-256 point into the QR (on top of the token and device id) pushed the payload past ~247
@@ -40,6 +41,7 @@ final class ConnectionServer {
     let photoStore: PhotoStore
     let deviceStatusStore: DeviceStatusStore
     let mirrorStore: MirrorStore
+    private let clipboardSync = ClipboardSyncManager()
 
     private var listener: NWListener?
     private var activeConnection: NWConnection?
@@ -65,6 +67,7 @@ final class ConnectionServer {
         self.photoStore = photoStore
         self.deviceStatusStore = deviceStatusStore
         self.mirrorStore = mirrorStore
+        clipboardSync.onLocalChange = { [weak self] text in self?.sendClipboardUpdate(text) }
     }
 
     /// Stops the listener entirely — not just the active connection. A phone's background
@@ -80,6 +83,7 @@ final class ConnectionServer {
         listener?.cancel()
         listener = nil
         state = .idle
+        clipboardSync.stop()
     }
 
     func start() {
@@ -195,6 +199,7 @@ final class ConnectionServer {
         if case .connected = state {
             state = .listening
         }
+        clipboardSync.stop()
     }
 
     private func receiveNext(on connection: NWConnection) {
@@ -281,6 +286,7 @@ final class ConnectionServer {
         try send(type: "helloAck", payload: ack, on: connection)
         activeDeviceId = hello.deviceId
         state = .connected(deviceName: hello.deviceName)
+        clipboardSync.start()
     }
 
     private func sendUnencryptedReject(on connection: NWConnection) {
@@ -326,6 +332,9 @@ final class ConnectionServer {
         case "mirror.stopped":
             let payload = try message.payload.decoded(as: MirrorStoppedPayload.self)
             mirrorStore.handleStopped(reason: payload.reason)
+        case "clipboard.update":
+            let payload = try message.payload.decoded(as: ClipboardUpdatePayload.self)
+            clipboardSync.applyRemoteUpdate(payload.text)
         case "ping":
             try send(type: "pong", payload: EmptyPayload(), on: connection)
         default:
@@ -406,6 +415,25 @@ final class ConnectionServer {
     func sendMirrorTextInput(text: String) {
         guard let connection = activeConnection else { return }
         try? send(type: "mirror.textInput", payload: MirrorTextInputPayload(text: text), on: connection)
+    }
+
+    private func sendClipboardUpdate(_ text: String) {
+        guard let connection = activeConnection else {
+            print("LinkToMac: sendClipboardUpdate — no active connection")
+            fflush(stdout)
+            return
+        }
+        let payload = ClipboardUpdatePayload(
+            text: text,
+            sourceDeviceId: identity.deviceId,
+            timestamp: Date().timeIntervalSince1970 * 1000
+        )
+        do {
+            try send(type: "clipboard.update", payload: payload, on: connection)
+        } catch {
+            print("LinkToMac: sendClipboardUpdate failed: \(error)")
+            fflush(stdout)
+        }
     }
 
     private func send<T: Encodable>(type: String, payload: T, on connection: NWConnection) throws {

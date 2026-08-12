@@ -171,6 +171,14 @@ struct MirrorTextInputPayload: Codable {
     let text: String
 }
 
+// MARK: - Shared clipboard (Phase 5)
+
+struct ClipboardUpdatePayload: Codable {
+    let text: String
+    let sourceDeviceId: String
+    let timestamp: Double // epoch millis
+}
+
 /// Minimal untyped JSON box so `Message.payload` can hold any of the payload structs above
 /// without a giant enum of coding keys. Encoded/decoded via JSONSerialization under the hood.
 enum JSONValue: Codable {

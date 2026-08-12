@@ -140,4 +140,18 @@ Screen mirroring splits into a **control plane** (JSON, the existing encrypted e
 
 Android requires the input-injection accessibility service to be enabled manually via Settings (same pattern as notification-listener access in Phase 1) — it can't be granted programmatically.
 
+## Message types (Phase 5)
+
+Shared clipboard, text only (no images/files) — modeled on iPhone/Mac Universal Clipboard, but the two platforms aren't symmetric because of an OS-level restriction, not a design choice:
+
+| type | direction | payload |
+|---|---|---|
+| `clipboard.update` | either direction | `{text, sourceDeviceId, timestamp}` — sent whenever a local copy is detected on either side. The receiving side writes it straight into its own system clipboard |
+
+**Mac → Android** works fully in the background: `ConnectionServer` polls `NSPasteboard.changeCount` every second (macOS has no clipboard-change notification API) and pushes text copies whenever the phone is connected; Android's `SyncForegroundService` calls `ClipboardManager.setPrimaryClip` the instant an update arrives, no foreground Activity needed — writing to the clipboard isn't restricted while backgrounded, only reading is.
+
+**Android → Mac** only fires while the LinkToMac Android app is focused. Since Android 10, `ClipboardManager.getPrimaryClip()` returns nothing for an app that isn't the default IME or currently focused — a background service (even a foreground-service-with-notification like `SyncForegroundService`) can't read clipboard content, full stop. `MainActivity` registers `OnPrimaryClipChangedListener` across `onResume`/`onPause` and checks the clipboard once on resume (in case it changed while the app wasn't running) — so a copy made elsewhere on the phone reaches the Mac once LinkToMac is opened/foregrounded, not the instant it happens like the Mac→Android direction.
+
+Both sides track the last-synced text and skip re-sending it, so applying a remote update doesn't bounce straight back to its source as if it were a new local copy.
+
 Future phases: none currently planned beyond Phase 4.

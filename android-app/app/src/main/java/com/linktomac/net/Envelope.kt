@@ -204,3 +204,12 @@ data class MirrorKeyPayload(
 data class MirrorTextInputPayload(
     val text: String
 )
+
+// Phase 5: shared clipboard
+
+@Serializable
+data class ClipboardUpdatePayload(
+    val text: String,
+    val sourceDeviceId: String,
+    val timestamp: Double // epoch millis
+)
