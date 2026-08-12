@@ -14,6 +14,8 @@ struct LinkToMacApp: App {
         let photoStore = PhotoStore()
         let deviceStatusStore = DeviceStatusStore()
         let mirrorStore = MirrorStore()
+        let fileStore = FileStore()
+        let contactStore = ContactStore()
         let server = ConnectionServer(
             identity: identity,
             pairedDeviceStore: pairedDeviceStore,
@@ -22,7 +24,9 @@ struct LinkToMacApp: App {
             messageStore: messageStore,
             photoStore: photoStore,
             deviceStatusStore: deviceStatusStore,
-            mirrorStore: mirrorStore
+            mirrorStore: mirrorStore,
+            fileStore: fileStore,
+            contactStore: contactStore
         )
         _server = State(initialValue: server)
         AppDelegate.server = server

@@ -3,6 +3,8 @@ import Network
 import CryptoKit
 import Observation
 import Darwin
+import AppKit
+import UniformTypeIdentifiers
 
 /// Deliberately minimal: the Mac's public key is *not* included here. Cramming a 65-byte
 /// P-256 point into the QR (on top of the token and device id) pushed the payload past ~247
@@ -32,6 +34,10 @@ final class ConnectionServer {
 
     private(set) var state: ConnectionState = .idle
     private(set) var pendingPairing: PairingQRPayload?
+    /// Set by ContactsView's "Message" action, consumed by MainWindowView (switches the sidebar
+    /// selection to Messages) and MessagesView (selects the matching thread, if one exists) —
+    /// the simplest way to jump between two sibling detail views that don't otherwise share state.
+    var pendingMessageAddress: String?
 
     private let identity: IdentityStore
     private let pairedDeviceStore: PairedDeviceStore
@@ -41,6 +47,8 @@ final class ConnectionServer {
     let photoStore: PhotoStore
     let deviceStatusStore: DeviceStatusStore
     let mirrorStore: MirrorStore
+    let fileStore: FileStore
+    let contactStore: ContactStore
     private let clipboardSync = ClipboardSyncManager()
 
     private var listener: NWListener?
@@ -57,7 +65,9 @@ final class ConnectionServer {
         messageStore: MessageStore,
         photoStore: PhotoStore,
         deviceStatusStore: DeviceStatusStore,
-        mirrorStore: MirrorStore
+        mirrorStore: MirrorStore,
+        fileStore: FileStore,
+        contactStore: ContactStore
     ) {
         self.identity = identity
         self.pairedDeviceStore = pairedDeviceStore
@@ -67,6 +77,8 @@ final class ConnectionServer {
         self.photoStore = photoStore
         self.deviceStatusStore = deviceStatusStore
         self.mirrorStore = mirrorStore
+        self.fileStore = fileStore
+        self.contactStore = contactStore
         clipboardSync.onLocalChange = { [weak self] text in self?.sendClipboardUpdate(text) }
     }
 
@@ -335,6 +347,61 @@ final class ConnectionServer {
         case "clipboard.update":
             let payload = try message.payload.decoded(as: ClipboardUpdatePayload.self)
             clipboardSync.applyRemoteUpdate(payload.text)
+        case "contacts.sync":
+            let payload = try message.payload.decoded(as: ContactsSyncPayload.self)
+            contactStore.update(payload.contacts)
+        case "contacts.updateResult":
+            let payload = try message.payload.decoded(as: ContactUpdateResultPayload.self)
+            contactStore.applyOperationResult(success: payload.success, error: payload.error)
+        case "contacts.createResult":
+            let payload = try message.payload.decoded(as: ContactCreateResultPayload.self)
+            contactStore.applyOperationResult(success: payload.success, error: payload.error)
+        case "contacts.deleteResult":
+            let payload = try message.payload.decoded(as: ContactDeleteResultPayload.self)
+            contactStore.applyOperationResult(success: payload.success, error: payload.error)
+        case "files.listResult":
+            let payload = try message.payload.decoded(as: FilesListResultPayload.self)
+            fileStore.applyListResult(path: payload.path, entries: payload.entries, error: payload.error)
+        case "files.downloadResult":
+            let payload = try message.payload.decoded(as: FilesDownloadResultPayload.self)
+            handleDownloadResult(payload)
+        case "files.uploadResult":
+            let payload = try message.payload.decoded(as: FilesUploadResultPayload.self)
+            fileStore.applyUploadResult(name: payload.name, success: payload.success, error: payload.error)
+            if payload.success {
+                requestFilesList(path: payload.path)
+            }
+        case "files.createFolderResult":
+            let payload = try message.payload.decoded(as: FilesCreateFolderResultPayload.self)
+            fileStore.applyCreateFolderResult(name: payload.name, success: payload.success, error: payload.error)
+            if payload.success {
+                requestFilesList(path: payload.path)
+            }
+        case "files.renameResult":
+            let payload = try message.payload.decoded(as: FilesRenameResultPayload.self)
+            fileStore.applyOperationResult(successMessage: "Renamed to \(payload.newName)", success: payload.success, error: payload.error)
+            if payload.success {
+                requestFilesList(path: fileStore.currentPath)
+            }
+        case "files.deleteResult":
+            let payload = try message.payload.decoded(as: FilesDeleteResultPayload.self)
+            fileStore.applyOperationResult(successMessage: "Deleted", success: payload.success, error: payload.error)
+            if payload.success {
+                requestFilesList(path: fileStore.currentPath)
+            }
+        case "files.copyResult":
+            let payload = try message.payload.decoded(as: FilesTransferResultPayload.self)
+            fileStore.applyOperationResult(successMessage: "Copied", success: payload.success, error: payload.error)
+            if payload.success {
+                requestFilesList(path: payload.destinationPath)
+            }
+        case "files.moveResult":
+            let payload = try message.payload.decoded(as: FilesTransferResultPayload.self)
+            fileStore.applyOperationResult(successMessage: "Moved", success: payload.success, error: payload.error)
+            if payload.success {
+                fileStore.clearClipboard()
+                requestFilesList(path: payload.destinationPath)
+            }
         case "ping":
             try send(type: "pong", payload: EmptyPayload(), on: connection)
         default:
@@ -356,6 +423,43 @@ final class ConnectionServer {
     func sendSms(address: String, body: String) {
         guard let connection = activeConnection else { return }
         try? send(type: "sms.send", payload: SmsSendPayload(address: address, body: body), on: connection)
+    }
+
+    /// Messages otherwise sync automatically on connect and whenever the phone's SMS content
+    /// changes — this just lets the refresh button force an immediate re-read.
+    func requestMessagesRefresh() {
+        guard let connection = activeConnection else { return }
+        try? send(type: "sms.refresh", payload: EmptyPayload(), on: connection)
+    }
+
+    /// Contacts otherwise sync automatically on connect and whenever the phone's contact list
+    /// changes — this just lets the "Sync" button force an immediate re-read.
+    func requestContactsRefresh() {
+        guard let connection = activeConnection else { return }
+        try? send(type: "contacts.refresh", payload: EmptyPayload(), on: connection)
+    }
+
+    /// Opens the phone's dialer pre-filled with the number — see ContactsDialPayload.
+    func dialContact(phoneNumber: String) {
+        guard let connection = activeConnection else { return }
+        try? send(type: "contacts.dial", payload: ContactsDialPayload(phoneNumber: phoneNumber), on: connection)
+    }
+
+    func updateContact(id: String, name: String, phoneNumber: String, isStarred: Bool, email: String?, organization: String?) {
+        guard let connection = activeConnection else { return }
+        let payload = ContactUpdatePayload(id: id, name: name, phoneNumber: phoneNumber, isStarred: isStarred, email: email, organization: organization)
+        try? send(type: "contacts.update", payload: payload, on: connection)
+    }
+
+    func createContact(name: String, phoneNumber: String, email: String?, organization: String?) {
+        guard let connection = activeConnection else { return }
+        let payload = ContactCreatePayload(name: name, phoneNumber: phoneNumber, email: email, organization: organization)
+        try? send(type: "contacts.create", payload: payload, on: connection)
+    }
+
+    func deleteContact(id: String) {
+        guard let connection = activeConnection else { return }
+        try? send(type: "contacts.delete", payload: ContactDeletePayload(id: id), on: connection)
     }
 
     /// Requests the next page of photo thumbnails. Caller (PhotosView) is responsible for not
@@ -433,6 +537,107 @@ final class ConnectionServer {
         } catch {
             print("LinkToMac: sendClipboardUpdate failed: \(error)")
             fflush(stdout)
+        }
+    }
+
+    func requestFilesList(path: String) {
+        guard let connection = activeConnection else { return }
+        fileStore.beginLoading()
+        try? send(type: "files.list", payload: FilesListRequestPayload(path: path), on: connection)
+    }
+
+    func requestFileDownload(path: String) {
+        guard let connection = activeConnection else { return }
+        try? send(type: "files.download", payload: FilesDownloadRequestPayload(path: path), on: connection)
+    }
+
+    /// Reads `fileURL` from disk and pushes it to the phone's current directory. `fileStore`'s
+    /// `currentPath` at call time is the drop target — the caller (FilesView) is responsible for
+    /// only allowing drops while a directory is actually open.
+    func uploadFile(fileURL: URL) {
+        guard let connection = activeConnection else { return }
+        guard let data = try? Data(contentsOf: fileURL) else { return }
+        guard data.count <= Self.maxTransferBytes else {
+            fileStore.applyUploadResult(name: fileURL.lastPathComponent, success: false, error: "\(fileURL.lastPathComponent) is too large to transfer (50 MB max)")
+            return
+        }
+        let mimeType = mimeType(for: fileURL)
+        let payload = FilesUploadPayload(
+            path: fileStore.currentPath,
+            name: fileURL.lastPathComponent,
+            dataBase64: data.base64EncodedString(),
+            mimeType: mimeType
+        )
+        fileStore.beginUpload(name: fileURL.lastPathComponent)
+        try? send(type: "files.upload", payload: payload, on: connection)
+    }
+
+    func createFolder(name: String) {
+        guard let connection = activeConnection else { return }
+        let payload = FilesCreateFolderPayload(path: fileStore.currentPath, name: name)
+        try? send(type: "files.createFolder", payload: payload, on: connection)
+    }
+
+    func renameEntry(name: String, to newName: String) {
+        guard let connection = activeConnection else { return }
+        let payload = FilesRenamePayload(path: entryPath(name), newName: newName)
+        try? send(type: "files.rename", payload: payload, on: connection)
+    }
+
+    func deleteEntry(name: String) {
+        guard let connection = activeConnection else { return }
+        let payload = FilesDeletePayload(path: entryPath(name))
+        try? send(type: "files.delete", payload: payload, on: connection)
+    }
+
+    func copyEntryToClipboard(name: String) {
+        fileStore.setClipboard(path: entryPath(name), name: name, operation: .copy)
+    }
+
+    func cutEntryToClipboard(name: String) {
+        fileStore.setClipboard(path: entryPath(name), name: name, operation: .cut)
+    }
+
+    /// Pastes into the currently open directory — there's no per-item paste target, matching
+    /// how most Mac apps treat a background "Paste" action.
+    func pasteClipboard() {
+        guard let connection = activeConnection,
+              let sourcePath = fileStore.clipboardPath,
+              let operation = fileStore.clipboardOperation else { return }
+        let payload = FilesTransferPayload(sourcePath: sourcePath, destinationPath: fileStore.currentPath)
+        let type = operation == .copy ? "files.copy" : "files.move"
+        try? send(type: type, payload: payload, on: connection)
+    }
+
+    private func entryPath(_ name: String) -> String {
+        fileStore.currentPath.isEmpty ? name : "\(fileStore.currentPath)/\(name)"
+    }
+
+    /// Matches the phone side's cap — both are transferred as a single base64 JSON payload
+    /// (same as Photos' full-resolution fetch), so there's no chunking/resume for large files.
+    private static let maxTransferBytes = 50 * 1024 * 1024
+
+    private func mimeType(for url: URL) -> String {
+        if let type = UTType(filenameExtension: url.pathExtension), let mime = type.preferredMIMEType {
+            return mime
+        }
+        return "application/octet-stream"
+    }
+
+    private func handleDownloadResult(_ payload: FilesDownloadResultPayload) {
+        guard let dataBase64 = payload.dataBase64, let data = Data(base64Encoded: dataBase64) else {
+            fileStore.applyDownloadError(payload.error ?? "Couldn't download \(payload.name)")
+            return
+        }
+        let downloadsDir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first!
+            .appendingPathComponent("LinkToMac", isDirectory: true)
+        do {
+            try FileManager.default.createDirectory(at: downloadsDir, withIntermediateDirectories: true)
+            let destination = downloadsDir.appendingPathComponent(payload.name)
+            try data.write(to: destination, options: .atomic)
+            NSWorkspace.shared.activateFileViewerSelecting([destination])
+        } catch {
+            fileStore.applyDownloadError("Couldn't save \(payload.name): \(error.localizedDescription)")
         }
     }
 

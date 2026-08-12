@@ -72,6 +72,20 @@ class MacConnection(
     var onMirrorKeyRequested: ((action: String) -> Unit)? = null
     var onMirrorTextInputRequested: ((text: String) -> Unit)? = null
     var onClipboardUpdateReceived: ((text: String) -> Unit)? = null
+    var onFilesListRequested: ((path: String) -> Unit)? = null
+    var onFilesDownloadRequested: ((path: String) -> Unit)? = null
+    var onFilesUploadRequested: ((path: String, name: String, dataBase64: String, mimeType: String) -> Unit)? = null
+    var onFilesCreateFolderRequested: ((path: String, name: String) -> Unit)? = null
+    var onFilesRenameRequested: ((path: String, newName: String) -> Unit)? = null
+    var onFilesDeleteRequested: ((path: String) -> Unit)? = null
+    var onFilesCopyRequested: ((sourcePath: String, destinationPath: String) -> Unit)? = null
+    var onFilesMoveRequested: ((sourcePath: String, destinationPath: String) -> Unit)? = null
+    var onContactsRefreshRequested: (() -> Unit)? = null
+    var onContactsDialRequested: ((phoneNumber: String) -> Unit)? = null
+    var onContactUpdateRequested: ((ContactUpdatePayload) -> Unit)? = null
+    var onContactCreateRequested: ((ContactCreatePayload) -> Unit)? = null
+    var onContactDeleteRequested: ((id: String) -> Unit)? = null
+    var onMessagesRefreshRequested: (() -> Unit)? = null
 
     /** Connect using a freshly scanned QR pairing payload. */
     fun connectForPairing(payload: PairingQrPayload) {
@@ -188,6 +202,56 @@ class MacConnection(
                     val payload = json.decodeFromJsonElement<ClipboardUpdatePayload>(envelope.payload)
                     onClipboardUpdateReceived?.invoke(payload.text)
                 }
+                "files.list" -> {
+                    val payload = json.decodeFromJsonElement<FilesListRequestPayload>(envelope.payload)
+                    onFilesListRequested?.invoke(payload.path)
+                }
+                "files.download" -> {
+                    val payload = json.decodeFromJsonElement<FilesDownloadRequestPayload>(envelope.payload)
+                    onFilesDownloadRequested?.invoke(payload.path)
+                }
+                "files.upload" -> {
+                    val payload = json.decodeFromJsonElement<FilesUploadPayload>(envelope.payload)
+                    onFilesUploadRequested?.invoke(payload.path, payload.name, payload.dataBase64, payload.mimeType)
+                }
+                "files.createFolder" -> {
+                    val payload = json.decodeFromJsonElement<FilesCreateFolderPayload>(envelope.payload)
+                    onFilesCreateFolderRequested?.invoke(payload.path, payload.name)
+                }
+                "files.rename" -> {
+                    val payload = json.decodeFromJsonElement<FilesRenamePayload>(envelope.payload)
+                    onFilesRenameRequested?.invoke(payload.path, payload.newName)
+                }
+                "files.delete" -> {
+                    val payload = json.decodeFromJsonElement<FilesDeletePayload>(envelope.payload)
+                    onFilesDeleteRequested?.invoke(payload.path)
+                }
+                "files.copy" -> {
+                    val payload = json.decodeFromJsonElement<FilesTransferPayload>(envelope.payload)
+                    onFilesCopyRequested?.invoke(payload.sourcePath, payload.destinationPath)
+                }
+                "files.move" -> {
+                    val payload = json.decodeFromJsonElement<FilesTransferPayload>(envelope.payload)
+                    onFilesMoveRequested?.invoke(payload.sourcePath, payload.destinationPath)
+                }
+                "contacts.refresh" -> onContactsRefreshRequested?.invoke()
+                "sms.refresh" -> onMessagesRefreshRequested?.invoke()
+                "contacts.dial" -> {
+                    val payload = json.decodeFromJsonElement<ContactsDialPayload>(envelope.payload)
+                    onContactsDialRequested?.invoke(payload.phoneNumber)
+                }
+                "contacts.update" -> {
+                    val payload = json.decodeFromJsonElement<ContactUpdatePayload>(envelope.payload)
+                    onContactUpdateRequested?.invoke(payload)
+                }
+                "contacts.create" -> {
+                    val payload = json.decodeFromJsonElement<ContactCreatePayload>(envelope.payload)
+                    onContactCreateRequested?.invoke(payload)
+                }
+                "contacts.delete" -> {
+                    val payload = json.decodeFromJsonElement<ContactDeletePayload>(envelope.payload)
+                    onContactDeleteRequested?.invoke(payload.id)
+                }
                 "pong" -> {}
             }
         } catch (e: Exception) {
@@ -300,6 +364,54 @@ class MacConnection(
     fun sendClipboardUpdate(text: String) {
         val payload = ClipboardUpdatePayload(text = text, sourceDeviceId = deviceId, timestamp = System.currentTimeMillis().toDouble())
         send("clipboard.update", json.encodeToJsonElement(payload))
+    }
+
+    fun sendFilesListResult(path: String, entries: List<FileEntry>, error: String? = null) {
+        send("files.listResult", json.encodeToJsonElement(FilesListResultPayload(path, entries, error)))
+    }
+
+    fun sendFilesDownloadResult(path: String, name: String, dataBase64: String? = null, mimeType: String? = null, error: String? = null) {
+        send("files.downloadResult", json.encodeToJsonElement(FilesDownloadResultPayload(path, name, dataBase64, mimeType, error)))
+    }
+
+    fun sendFilesUploadResult(path: String, name: String, success: Boolean, error: String? = null) {
+        send("files.uploadResult", json.encodeToJsonElement(FilesUploadResultPayload(path, name, success, error)))
+    }
+
+    fun sendFilesCreateFolderResult(path: String, name: String, success: Boolean, error: String? = null) {
+        send("files.createFolderResult", json.encodeToJsonElement(FilesCreateFolderResultPayload(path, name, success, error)))
+    }
+
+    fun sendFilesRenameResult(path: String, newName: String, success: Boolean, error: String? = null) {
+        send("files.renameResult", json.encodeToJsonElement(FilesRenameResultPayload(path, newName, success, error)))
+    }
+
+    fun sendFilesDeleteResult(path: String, success: Boolean, error: String? = null) {
+        send("files.deleteResult", json.encodeToJsonElement(FilesDeleteResultPayload(path, success, error)))
+    }
+
+    fun sendFilesCopyResult(sourcePath: String, destinationPath: String, success: Boolean, error: String? = null) {
+        send("files.copyResult", json.encodeToJsonElement(FilesTransferResultPayload(sourcePath, destinationPath, success, error)))
+    }
+
+    fun sendFilesMoveResult(sourcePath: String, destinationPath: String, success: Boolean, error: String? = null) {
+        send("files.moveResult", json.encodeToJsonElement(FilesTransferResultPayload(sourcePath, destinationPath, success, error)))
+    }
+
+    fun sendContactsSync(contacts: List<ContactEntry>) {
+        send("contacts.sync", json.encodeToJsonElement(ContactsSyncPayload(contacts)))
+    }
+
+    fun sendContactUpdateResult(id: String, success: Boolean, error: String? = null) {
+        send("contacts.updateResult", json.encodeToJsonElement(ContactUpdateResultPayload(id, success, error)))
+    }
+
+    fun sendContactCreateResult(success: Boolean, error: String? = null) {
+        send("contacts.createResult", json.encodeToJsonElement(ContactCreateResultPayload(success, error)))
+    }
+
+    fun sendContactDeleteResult(id: String, success: Boolean, error: String? = null) {
+        send("contacts.deleteResult", json.encodeToJsonElement(ContactDeleteResultPayload(id, success, error)))
     }
 
     /** Binary WebSocket frame, not the JSON envelope — see docs/PROTOCOL.md's Phase 4 binary

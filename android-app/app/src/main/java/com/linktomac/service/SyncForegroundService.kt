@@ -9,6 +9,7 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.IBinder
 import android.util.Base64
@@ -16,6 +17,8 @@ import androidx.core.app.NotificationCompat
 import com.linktomac.MainActivity
 import com.linktomac.data.BatteryStatusRepository
 import com.linktomac.data.CallLogRepository
+import com.linktomac.data.ContactRepository
+import com.linktomac.data.FileRepository
 import com.linktomac.data.PhotoRepository
 import com.linktomac.data.SmsRepository
 import com.linktomac.net.ConnectionState
@@ -51,10 +54,13 @@ class SyncForegroundService : Service() {
     private lateinit var connection: MacConnection
     private lateinit var callLogRepository: CallLogRepository
     private lateinit var smsRepository: SmsRepository
+    private lateinit var contactRepository: ContactRepository
     private lateinit var photoRepository: PhotoRepository
     private lateinit var batteryStatusRepository: BatteryStatusRepository
+    private lateinit var fileRepository: FileRepository
     private var discoveryJob: Job? = null
     private var syncJob: Job? = null
+    private var contactSyncJob: Job? = null
     private var photoLibraryChangedJob: Job? = null
 
     /** Tracks the last text synced in either direction so a remote update we just wrote to the
@@ -68,8 +74,10 @@ class SyncForegroundService : Service() {
         pairedDeviceStore = PairedDeviceStore(applicationContext)
         callLogRepository = CallLogRepository(applicationContext)
         smsRepository = SmsRepository(applicationContext)
+        contactRepository = ContactRepository(applicationContext)
         photoRepository = PhotoRepository(applicationContext)
         batteryStatusRepository = BatteryStatusRepository(applicationContext)
+        fileRepository = FileRepository()
         connection = MacConnection(
             deviceId = localDeviceId(),
             deviceName = Build.MODEL,
@@ -118,10 +126,109 @@ class SyncForegroundService : Service() {
             InputInjectionAccessibilityService.instance?.pasteText(text)
         }
         connection.onClipboardUpdateReceived = { text -> applyRemoteClipboard(text) }
+        connection.onFilesListRequested = { path ->
+            scope.launch(Dispatchers.IO) {
+                if (!fileRepository.hasAccess()) {
+                    connection.sendFilesListResult(path, emptyList(), error = "File access not granted")
+                } else {
+                    val entries = fileRepository.list(path)
+                    if (entries != null) {
+                        connection.sendFilesListResult(path, entries)
+                    } else {
+                        connection.sendFilesListResult(path, emptyList(), error = "Can't open that folder")
+                    }
+                }
+            }
+        }
+        connection.onFilesDownloadRequested = { path ->
+            scope.launch(Dispatchers.IO) {
+                val name = path.substringAfterLast('/')
+                val result = fileRepository.readFile(path)
+                if (result != null) {
+                    val (bytes, mimeType) = result
+                    connection.sendFilesDownloadResult(path, name, Base64.encodeToString(bytes, Base64.NO_WRAP), mimeType)
+                } else {
+                    connection.sendFilesDownloadResult(path, name, error = "Couldn't read that file")
+                }
+            }
+        }
+        connection.onFilesUploadRequested = { path, name, dataBase64, _ ->
+            scope.launch(Dispatchers.IO) {
+                val bytes = Base64.decode(dataBase64, Base64.NO_WRAP)
+                val success = fileRepository.writeFile(path, name, bytes)
+                connection.sendFilesUploadResult(path, name, success, if (success) null else "Couldn't write that file")
+            }
+        }
+        connection.onFilesCreateFolderRequested = { path, name ->
+            scope.launch(Dispatchers.IO) {
+                val success = fileRepository.createFolder(path, name)
+                connection.sendFilesCreateFolderResult(path, name, success, if (success) null else "Couldn't create that folder")
+            }
+        }
+        connection.onFilesRenameRequested = { path, newName ->
+            scope.launch(Dispatchers.IO) {
+                val success = fileRepository.rename(path, newName)
+                connection.sendFilesRenameResult(path, newName, success, if (success) null else "Couldn't rename that item")
+            }
+        }
+        connection.onFilesDeleteRequested = { path ->
+            scope.launch(Dispatchers.IO) {
+                val success = fileRepository.delete(path)
+                connection.sendFilesDeleteResult(path, success, if (success) null else "Couldn't delete that item")
+            }
+        }
+        connection.onFilesCopyRequested = { sourcePath, destinationPath ->
+            scope.launch(Dispatchers.IO) {
+                val success = fileRepository.copy(sourcePath, destinationPath)
+                connection.sendFilesCopyResult(sourcePath, destinationPath, success, if (success) null else "Couldn't copy that item")
+            }
+        }
+        connection.onFilesMoveRequested = { sourcePath, destinationPath ->
+            scope.launch(Dispatchers.IO) {
+                val success = fileRepository.move(sourcePath, destinationPath)
+                connection.sendFilesMoveResult(sourcePath, destinationPath, success, if (success) null else "Couldn't move that item")
+            }
+        }
+        connection.onContactsRefreshRequested = {
+            scope.launch(Dispatchers.IO) { connection.sendContactsSync(contactRepository.readAll()) }
+        }
+        connection.onContactsDialRequested = { phoneNumber ->
+            val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phoneNumber")).apply {
+                flags = Intent.FLAG_ACTIVITY_NEW_TASK
+            }
+            startActivity(intent)
+        }
+        connection.onContactUpdateRequested = { payload ->
+            scope.launch(Dispatchers.IO) {
+                val success = contactRepository.update(
+                    payload.id, payload.name, payload.phoneNumber, payload.isStarred, payload.email, payload.organization
+                )
+                connection.sendContactUpdateResult(payload.id, success, if (success) null else "Couldn't update that contact")
+                if (success) connection.sendContactsSync(contactRepository.readAll())
+            }
+        }
+        connection.onContactCreateRequested = { payload ->
+            scope.launch(Dispatchers.IO) {
+                val success = contactRepository.create(payload.name, payload.phoneNumber, payload.email, payload.organization)
+                connection.sendContactCreateResult(success, if (success) null else "Couldn't create that contact")
+                if (success) connection.sendContactsSync(contactRepository.readAll())
+            }
+        }
+        connection.onContactDeleteRequested = { id ->
+            scope.launch(Dispatchers.IO) {
+                val success = contactRepository.delete(id)
+                connection.sendContactDeleteResult(id, success, if (success) null else "Couldn't delete that contact")
+                if (success) connection.sendContactsSync(contactRepository.readAll())
+            }
+        }
+        connection.onMessagesRefreshRequested = {
+            scope.launch(Dispatchers.IO) { connection.sendSmsSync(smsRepository.readThreads()) }
+        }
         connection.state.onEach { state ->
             updateNotification(state)
             if (state is ConnectionState.Connected) {
                 syncCallsAndSms()
+                connection.sendContactsSync(contactRepository.readAll())
                 batteryStatusRepository.readCurrent()?.let { connection.sendDeviceStatus(it) }
             }
         }.launchIn(scope)
@@ -132,6 +239,7 @@ class SyncForegroundService : Service() {
         // ACTION_REFRESH_DATA below, which fires right after the user grants access.
         callLogRepository.observe { scheduleSync() }
         smsRepository.observe { scheduleSync() }
+        contactRepository.observe { scheduleContactSync() }
         photoRepository.observe { schedulePhotoLibraryChangedNotification() }
 
         if (pairedDeviceStore.isPaired) {
@@ -151,7 +259,9 @@ class SyncForegroundService : Service() {
             ACTION_REFRESH_DATA -> {
                 callLogRepository.observe { scheduleSync() }
                 smsRepository.observe { scheduleSync() }
+                contactRepository.observe { scheduleContactSync() }
                 syncCallsAndSms()
+                connection.sendContactsSync(contactRepository.readAll())
             }
             ACTION_REFRESH_PHOTOS -> photoRepository.observe { schedulePhotoLibraryChangedNotification() }
             ACTION_RECONNECT -> if (pairedDeviceStore.isPaired) startDiscovery()
@@ -170,9 +280,11 @@ class SyncForegroundService : Service() {
         instance = null
         discoveryJob?.cancel()
         syncJob?.cancel()
+        contactSyncJob?.cancel()
         photoLibraryChangedJob?.cancel()
         callLogRepository.stopObserving()
         smsRepository.stopObserving()
+        contactRepository.stopObserving()
         photoRepository.stopObserving()
         batteryStatusRepository.stopObserving()
         connection.close()
@@ -194,6 +306,17 @@ class SyncForegroundService : Service() {
     private fun syncCallsAndSms() {
         connection.sendCallLogSync(callLogRepository.readRecent())
         connection.sendSmsSync(smsRepository.readThreads())
+    }
+
+    /** Debounces bursts of ContentObserver changes (e.g. importing a batch of contacts) into one sync. */
+    private fun scheduleContactSync() {
+        contactSyncJob?.cancel()
+        contactSyncJob = scope.launch {
+            delay(750)
+            if (connection.state.value is ConnectionState.Connected) {
+                connection.sendContactsSync(contactRepository.readAll())
+            }
+        }
     }
 
     /** Debounces bursts of ContentObserver changes (e.g. a batch of messages arriving) into one sync. */

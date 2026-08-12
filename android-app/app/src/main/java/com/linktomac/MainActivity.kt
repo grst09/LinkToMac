@@ -6,8 +6,10 @@ import android.content.ClipboardManager
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -54,6 +56,11 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+    /** Only reached below API 30 — API 30+ file access is the MANAGE_EXTERNAL_STORAGE special
+     *  permission, granted via Settings rather than a runtime dialog (see requestFileAccess). */
+    private val legacyFileAccessPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+
     private val screenCapturePermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
             val data = result.data
@@ -93,6 +100,8 @@ class MainActivity : ComponentActivity() {
                         onRequestPhotoAccess = { requestPhotoAccess() },
                         isAccessibilityServiceEnabled = { isAccessibilityServiceEnabled() },
                         onRequestAccessibilityAccess = { openAccessibilitySettings() },
+                        isFileAccessGranted = { isFileAccessGranted() },
+                        onRequestFileAccess = { requestFileAccess() },
                         isPaired = { pairedDeviceStore.isPaired },
                         pairedMacName = { pairedDeviceStore.macDeviceName },
                         onReconnect = { SyncForegroundService.reconnectNow(applicationContext) },
@@ -146,10 +155,18 @@ class MainActivity : ComponentActivity() {
     }
 
     /** READ_CONTACTS is excluded from this check — it only improves contact-name resolution
-     *  and call log/SMS access is fully functional (falling back to raw numbers) without it. */
+     *  and call log/SMS access is fully functional (falling back to raw numbers) without it.
+     *  WRITE_CONTACTS *is* included: without it the Contacts tab's edit/create/delete actions
+     *  fail outright, and since this whole check gates whether the "Grant Access" card even
+     *  appears, leaving it out would mean a user who already granted everything else has no way
+     *  to ever be re-prompted for it — the card just never comes back. */
     private fun isCallsAndMessagesAccessGranted(): Boolean {
-        return listOf(Manifest.permission.READ_CALL_LOG, Manifest.permission.READ_SMS, Manifest.permission.SEND_SMS)
-            .all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
+        return listOf(
+            Manifest.permission.READ_CALL_LOG,
+            Manifest.permission.READ_SMS,
+            Manifest.permission.SEND_SMS,
+            Manifest.permission.WRITE_CONTACTS
+        ).all { checkSelfPermission(it) == PackageManager.PERMISSION_GRANTED }
     }
 
     private fun requestCallsAndMessagesAccess() {
@@ -158,7 +175,8 @@ class MainActivity : ComponentActivity() {
                 Manifest.permission.READ_CALL_LOG,
                 Manifest.permission.READ_SMS,
                 Manifest.permission.SEND_SMS,
-                Manifest.permission.READ_CONTACTS
+                Manifest.permission.READ_CONTACTS,
+                Manifest.permission.WRITE_CONTACTS
             )
         )
     }
@@ -191,6 +209,29 @@ class MainActivity : ComponentActivity() {
 
     private fun openAccessibilitySettings() {
         startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+    }
+
+    /** MANAGE_EXTERNAL_STORAGE (API 30+) is a "special app access" permission — it can only be
+     *  granted from its own Settings screen, not a runtime dialog. Below API 30, ordinary
+     *  READ/WRITE_EXTERNAL_STORAGE was all scoped storage required. */
+    private fun isFileAccessGranted(): Boolean =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            Environment.isExternalStorageManager()
+        } else {
+            checkSelfPermission(Manifest.permission.READ_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED &&
+                checkSelfPermission(Manifest.permission.WRITE_EXTERNAL_STORAGE) == PackageManager.PERMISSION_GRANTED
+        }
+
+    private fun requestFileAccess() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            startActivity(
+                Intent(Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION, Uri.parse("package:$packageName"))
+            )
+        } else {
+            legacyFileAccessPermissionLauncher.launch(
+                arrayOf(Manifest.permission.READ_EXTERNAL_STORAGE, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+            )
+        }
     }
 
     // Android only allows reading clipboard content while the app is focused (or is the

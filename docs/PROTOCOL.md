@@ -154,4 +154,66 @@ Shared clipboard, text only (no images/files) — modeled on iPhone/Mac Universa
 
 Both sides track the last-synced text and skip re-sending it, so applying a remote update doesn't bounce straight back to its source as if it were a new local copy.
 
-Future phases: none currently planned beyond Phase 4.
+## Message types (Phase 6)
+
+File browsing over the phone's shared storage root (`Environment.getExternalStorageDirectory()`). `path` is always relative to that root ("" is the root itself) — never an absolute filesystem path — joined with "/"; `FileRepository.resolve` rejects anything that escapes the root (including via `..` segments).
+
+| type | direction | payload |
+|---|---|---|
+| `files.list` | Mac → Android | `{path}` |
+| `files.listResult` | Android → Mac | `{path, entries: [FileEntry], error?}` |
+| `files.download` | Mac → Android | `{path}` |
+| `files.downloadResult` | Android → Mac | `{path, name, dataBase64?, mimeType?, error?}` |
+| `files.upload` | Mac → Android | `{path, name, dataBase64, mimeType}` — `path` is the destination directory |
+| `files.uploadResult` | Android → Mac | `{path, name, success, error?}` |
+| `files.createFolder` | Mac → Android | `{path, name}` — `path` is the parent directory |
+| `files.createFolderResult` | Android → Mac | `{path, name, success, error?}` |
+| `files.rename` | Mac → Android | `{path, newName}` |
+| `files.renameResult` | Android → Mac | `{path, newName, success, error?}` |
+| `files.delete` | Mac → Android | `{path}` |
+| `files.deleteResult` | Android → Mac | `{path, success, error?}` |
+| `files.copy` | Mac → Android | `{sourcePath, destinationPath}` — `destinationPath` is a directory; the item lands named after its own basename |
+| `files.copyResult` | Android → Mac | `{sourcePath, destinationPath, success, error?}` |
+| `files.move` | Mac → Android | `{sourcePath, destinationPath}` — same shape as `files.copy`; a same-volume rename under the hood, so it's atomic |
+| `files.moveResult` | Android → Mac | `{sourcePath, destinationPath, success, error?}` |
+
+```
+FileEntry = {name, isDirectory, sizeBytes, modifiedAt}
+  modifiedAt: epoch milliseconds
+```
+
+Downloads/uploads travel as a single base64 payload in one message, same as Phase 3's full-resolution photo fetch — no chunking or resume, capped at 50MB on both sides. Requires `MANAGE_EXTERNAL_STORAGE` (API 30+, granted via its own Settings screen — not a runtime dialog) or the legacy `READ`/`WRITE_EXTERNAL_STORAGE` runtime permissions below API 30.
+
+## Message types (Phase 7)
+
+Contacts sync as a **full snapshot on change**, same model as Phase 2's call log/SMS — sent once after `helloAck` and again whenever `ContactsContract.Contacts.CONTENT_URI` changes.
+
+| type | direction | payload |
+|---|---|---|
+| `contacts.sync` | Android → Mac | `{contacts: [ContactEntry]}` |
+| `contacts.refresh` | Mac → Android | `{}` — forces an immediate re-read/push, for the Mac's manual Sync button |
+| `contacts.dial` | Mac → Android | `{phoneNumber}` — opens the phone's own dialer via `ACTION_DIAL`; the phone still has to tap Call. `ACTION_CALL` (a direct, silent call) needs the separate `CALL_PHONE` permission and is a deliberately different, more invasive capability this app doesn't take on |
+| `contacts.update` | Mac → Android | `{id, name, phoneNumber, isStarred, email?, organization?}` |
+| `contacts.updateResult` | Android → Mac | `{id, success, error?}` |
+| `contacts.create` | Mac → Android | `{name, phoneNumber, email?, organization?}` |
+| `contacts.createResult` | Android → Mac | `{success, error?}` |
+| `contacts.delete` | Mac → Android | `{id}` |
+| `contacts.deleteResult` | Android → Mac | `{id, success, error?}` |
+
+```
+ContactEntry = {id, name, phoneNumber, isStarred, email?, organization?}
+```
+
+Only contacts with at least one phone number are included — the point is to message/call them from the Mac. `phoneNumber` is the first number `ContactsContract.CommonDataKinds.Phone` reports for that contact, not the full set; editing/creating writes through `ContentProviderOperation` batches against `RawContacts`/`Data`, updating the first raw contact backing the aggregate id (a contact merged from multiple accounts has several raw contacts — picking the first is the same simplification most lightweight contact editors make). Requires `WRITE_CONTACTS` in addition to `READ_CONTACTS`; both are requested together with the call-log/SMS permission group in `MainActivity`.
+
+## Not implemented: SMS send/delete for new or arbitrary conversations
+
+Android restricts writes to the shared `content://sms` database — insert, update, *and* delete — to whichever app currently holds the `android.app.role.SMS` (default SMS app) role. LinkToMac deliberately doesn't take on that role (it would take over the phone's SMS handling from apps like Google Messages). Consequences, confirmed on real hardware by directly querying the SMS provider after a send/delete:
+
+- **Sending to a brand-new number** (Mac → Android `sms.send`) still transmits successfully via `SmsManager`, but the phone never records it in `content://sms` — there is nothing for the next `sms.sync` to report back. The Mac's `MessageStore` covers this with a client-side-only "local echo" thread (id prefixed `local:`) that's never sent to or expected from Android; it's dropped automatically if a real thread for that address ever does appear in a sync.
+- **Deleting any thread** was attempted (a `sms.deleteThread` round trip) and reliably failed on real hardware — Android rejected the delete outright. That message type was removed rather than shipped as a dead/misleading feature.
+- **RCS conversations** (Google Messages upgrades a contact to RCS automatically when both sides support it) are stored entirely in Google Messages' own private database — there is no public Android API for a third-party app to read RCS content at all, regardless of default-app status. A conversation that's gone RCS won't appear in LinkToMac's Messages list, sent or received, and there's no workaround available to a non-default, non-Google client.
+
+Plain SMS conversations (not upgraded to RCS) work normally in both directions once a thread already exists.
+
+Future phases: none currently planned.

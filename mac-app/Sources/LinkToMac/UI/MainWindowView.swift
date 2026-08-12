@@ -7,7 +7,6 @@ struct MainWindowView: View {
     enum SidebarSection: String, CaseIterable, Identifiable {
         case notifications = "Notifications"
         case messages = "Messages"
-        case calls = "Calls"
         case photos = "Photos"
         case files = "Files"
         case contacts = "Contacts"
@@ -16,8 +15,10 @@ struct MainWindowView: View {
         case settings = "Settings"
 
         /// Everything except Settings, which is pinned separately at the bottom of the sidebar.
+        /// Call history isn't a separate item — it's a sub-tab inside Contacts (ContactsView),
+        /// matching Phone Link's combined Calls app layout.
         static var navigationItems: [SidebarSection] {
-            [.notifications, .messages, .calls, .photos, .files, .contacts, .mirroring, .device]
+            [.notifications, .messages, .photos, .files, .contacts, .mirroring, .device]
         }
 
         var id: String { rawValue }
@@ -26,7 +27,6 @@ struct MainWindowView: View {
             switch self {
             case .notifications: return "bell.fill"
             case .messages: return "message.fill"
-            case .calls: return "phone.fill"
             case .photos: return "photo.on.rectangle.angled"
             case .files: return "folder.fill"
             case .contacts: return "person.2.fill"
@@ -68,6 +68,11 @@ struct MainWindowView: View {
             detailView
                 .navigationTitle("LinkToMac")
         }
+        .onChange(of: server.pendingMessageAddress) {
+            if server.pendingMessageAddress != nil {
+                selection = .messages
+            }
+        }
     }
 
     @ViewBuilder
@@ -81,26 +86,13 @@ struct MainWindowView: View {
         case .device:
             DeviceStatusView(server: server)
         case .messages:
-            MessagesView(
-                store: server.messageStore,
-                onSend: { address, body in server.sendSms(address: address, body: body) }
-            )
-        case .calls:
-            CallsView(store: server.callLogStore)
+            MessagesView(server: server)
         case .photos:
             PhotosView(server: server)
         case .files:
-            ComingSoonView(
-                title: "Files",
-                systemImage: "folder.fill",
-                detail: "Browsing files on your phone isn't currently planned, but may be added in a future phase."
-            )
+            FilesView(server: server)
         case .contacts:
-            ComingSoonView(
-                title: "Contacts",
-                systemImage: "person.2.fill",
-                detail: "A contacts browser isn't currently planned, but may be added in a future phase."
-            )
+            ContactsView(server: server)
         case .mirroring:
             ScreenMirrorView(server: server)
         case .settings:

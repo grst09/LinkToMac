@@ -125,6 +125,72 @@ data class SmsSendPayload(
     val body: String
 )
 
+
+// Phase 7: contacts
+
+@Serializable
+data class ContactEntry(
+    val id: String,
+    val name: String,
+    val phoneNumber: String,
+    val isStarred: Boolean,
+    val email: String? = null,
+    val organization: String? = null
+)
+
+@Serializable
+data class ContactsSyncPayload(
+    val contacts: List<ContactEntry>
+)
+
+@Serializable
+data class ContactsDialPayload(
+    val phoneNumber: String
+)
+
+@Serializable
+data class ContactUpdatePayload(
+    val id: String,
+    val name: String,
+    val phoneNumber: String,
+    val isStarred: Boolean,
+    val email: String? = null,
+    val organization: String? = null
+)
+
+@Serializable
+data class ContactUpdateResultPayload(
+    val id: String,
+    val success: Boolean,
+    val error: String? = null
+)
+
+@Serializable
+data class ContactCreatePayload(
+    val name: String,
+    val phoneNumber: String,
+    val email: String? = null,
+    val organization: String? = null
+)
+
+@Serializable
+data class ContactCreateResultPayload(
+    val success: Boolean,
+    val error: String? = null
+)
+
+@Serializable
+data class ContactDeletePayload(
+    val id: String
+)
+
+@Serializable
+data class ContactDeleteResultPayload(
+    val id: String,
+    val success: Boolean,
+    val error: String? = null
+)
+
 // Phase 3: photos + device status
 
 @Serializable
@@ -212,4 +278,110 @@ data class ClipboardUpdatePayload(
     val text: String,
     val sourceDeviceId: String,
     val timestamp: Double // epoch millis
+)
+
+// Phase 6: file browsing
+
+@Serializable
+data class FileEntry(
+    val name: String,
+    val isDirectory: Boolean,
+    val sizeBytes: Double,
+    val modifiedAt: Double // epoch millis
+)
+
+@Serializable
+data class FilesListRequestPayload(
+    val path: String
+)
+
+@Serializable
+data class FilesListResultPayload(
+    val path: String,
+    val entries: List<FileEntry>,
+    val error: String? = null
+)
+
+@Serializable
+data class FilesDownloadRequestPayload(
+    val path: String
+)
+
+@Serializable
+data class FilesDownloadResultPayload(
+    val path: String,
+    val name: String,
+    val dataBase64: String? = null,
+    val mimeType: String? = null,
+    val error: String? = null
+)
+
+@Serializable
+data class FilesUploadPayload(
+    val path: String,
+    val name: String,
+    val dataBase64: String,
+    val mimeType: String
+)
+
+@Serializable
+data class FilesUploadResultPayload(
+    val path: String,
+    val name: String,
+    val success: Boolean,
+    val error: String? = null
+)
+
+@Serializable
+data class FilesCreateFolderPayload(
+    val path: String,
+    val name: String
+)
+
+@Serializable
+data class FilesCreateFolderResultPayload(
+    val path: String,
+    val name: String,
+    val success: Boolean,
+    val error: String? = null
+)
+
+@Serializable
+data class FilesRenamePayload(
+    val path: String,
+    val newName: String
+)
+
+@Serializable
+data class FilesRenameResultPayload(
+    val path: String,
+    val newName: String,
+    val success: Boolean,
+    val error: String? = null
+)
+
+@Serializable
+data class FilesDeletePayload(
+    val path: String
+)
+
+@Serializable
+data class FilesDeleteResultPayload(
+    val path: String,
+    val success: Boolean,
+    val error: String? = null
+)
+
+@Serializable
+data class FilesTransferPayload(
+    val sourcePath: String,
+    val destinationPath: String
+)
+
+@Serializable
+data class FilesTransferResultPayload(
+    val sourcePath: String,
+    val destinationPath: String,
+    val success: Boolean,
+    val error: String? = null
 )
