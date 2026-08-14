@@ -4,28 +4,39 @@ import { Sidebar } from "./components/Sidebar";
 import { ComingSoon } from "./components/ComingSoon";
 import { ThisDeviceView } from "./components/ThisDeviceView";
 import { NotificationsView } from "./components/NotificationsView";
+import { MessagesView } from "./components/MessagesView";
+import { ContactsView } from "./components/ContactsView";
+import { PhotosView } from "./components/PhotosView";
+import { FilesView } from "./components/FilesView";
 import { sectionMeta, type SectionId } from "./theme/sections";
 import { initConnectionListeners } from "./store/connection";
 import { initNotificationListeners } from "./store/notifications";
+import { useNavigationStore } from "./store/navigation";
 
-type PlaceholderSectionId = Exclude<SectionId, "device" | "notifications">;
+type PlaceholderSectionId = Exclude<
+  SectionId,
+  "device" | "notifications" | "messages" | "contacts" | "photos" | "files"
+>;
 
 const COMING_SOON_DETAIL: Record<PlaceholderSectionId, string> = {
-  messages: "SMS threads and reply-from-Mac will show up here.",
-  photos: "A synced photo grid from your phone will show up here.",
-  files: "Browse, upload, and download files from your phone's storage.",
-  contacts: "Your phone's contacts, with call and message actions.",
   mirroring: "See and control your phone's screen from your Mac.",
   settings: "App settings aren't built yet — for now there's nothing to configure.",
 };
 
 function App() {
   const [selection, setSelection] = useState<SectionId>("device");
+  const pendingMessageAddress = useNavigationStore((s) => s.pendingMessageAddress);
 
   useEffect(() => {
     initConnectionListeners();
     initNotificationListeners();
   }, []);
+
+  // Contacts' "Message" action sets pendingMessageAddress — switch to Messages so it can
+  // consume it (open the matching thread or start composing), matching MainWindowView.swift.
+  useEffect(() => {
+    if (pendingMessageAddress) setSelection("messages");
+  }, [pendingMessageAddress]);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-neutral-950">
@@ -44,6 +55,14 @@ function App() {
               <ThisDeviceView />
             ) : selection === "notifications" ? (
               <NotificationsView />
+            ) : selection === "messages" ? (
+              <MessagesView />
+            ) : selection === "contacts" ? (
+              <ContactsView />
+            ) : selection === "photos" ? (
+              <PhotosView />
+            ) : selection === "files" ? (
+              <FilesView />
             ) : (
               <ComingSoon
                 section={sectionMeta(selection)}

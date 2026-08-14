@@ -1,8 +1,12 @@
 mod clipboard;
+mod commands;
 mod crypto;
 mod dispatch;
+mod files;
+mod messages;
 mod net;
 mod notify;
+mod photos;
 mod protocol;
 mod store;
 
@@ -25,9 +29,33 @@ pub fn run() {
             net::server::begin_pairing,
             net::server::list_paired_devices,
             net::server::forget_device,
-            dispatch_commands::list_notifications,
-            dispatch_commands::dismiss_notification,
-            dispatch_commands::get_device_status,
+            commands::list_notifications,
+            commands::dismiss_notification,
+            commands::get_device_status,
+            commands::list_calls,
+            commands::list_threads,
+            commands::send_sms,
+            commands::refresh_messages,
+            commands::list_contacts,
+            commands::refresh_contacts,
+            commands::dial_contact,
+            commands::update_contact,
+            commands::create_contact,
+            commands::delete_contact,
+            commands::list_photos,
+            commands::request_photo_page,
+            commands::request_photo_full,
+            commands::get_photo_full,
+            commands::get_files_state,
+            commands::list_files,
+            commands::download_file,
+            commands::upload_file,
+            commands::create_folder,
+            commands::rename_file,
+            commands::delete_file,
+            commands::cut_to_clipboard,
+            commands::copy_to_clipboard,
+            commands::paste_clipboard,
         ])
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
@@ -50,38 +78,4 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
-}
-
-/// Small Tauri-command wrappers that don't belong in `dispatch.rs` itself (that module handles
-/// *incoming* protocol messages; these are frontend-facing reads/actions over the same state).
-mod dispatch_commands {
-    use std::sync::Arc;
-
-    use crate::net::server::{send_to_active, AppState};
-    use crate::protocol::envelope::{DeviceStatusPayload, NotificationPostedPayload, NotificationRemovedPayload};
-
-    #[tauri::command]
-    pub async fn list_notifications(
-        state: tauri::State<'_, Arc<AppState>>,
-    ) -> Result<Vec<NotificationPostedPayload>, String> {
-        Ok(state.notifications.lock().await.clone())
-    }
-
-    #[tauri::command]
-    pub async fn dismiss_notification(
-        state: tauri::State<'_, Arc<AppState>>,
-        id: String,
-    ) -> Result<(), String> {
-        state.notifications.lock().await.retain(|n| n.id != id);
-        send_to_active(&state, "notification.dismiss", &NotificationRemovedPayload { id })
-            .await
-            .map_err(|e| e.to_string())
-    }
-
-    #[tauri::command]
-    pub async fn get_device_status(
-        state: tauri::State<'_, Arc<AppState>>,
-    ) -> Result<Option<DeviceStatusPayload>, String> {
-        Ok(state.device_status.lock().await.clone())
-    }
 }

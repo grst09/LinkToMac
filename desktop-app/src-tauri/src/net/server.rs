@@ -60,6 +60,11 @@ pub struct AppState {
     /// just arrived from the other side. Matches `ClipboardSyncManager.swift`'s single
     /// `lastSyncedText` exactly (not separate sent/received trackers).
     pub clipboard_last_synced: Mutex<Option<String>>,
+    pub calls: Mutex<Vec<crate::protocol::envelope::CallLogEntry>>,
+    pub messages: Mutex<crate::messages::MessageState>,
+    pub contacts: Mutex<Vec<crate::protocol::envelope::ContactEntry>>,
+    pub photos: Mutex<crate::photos::PhotoState>,
+    pub files: Mutex<crate::files::FileState>,
     pub app_handle: tauri::AppHandle,
     _mdns: ServiceDaemon,
 }
@@ -80,6 +85,11 @@ impl AppState {
             notifications: Mutex::new(Vec::new()),
             device_status: Mutex::new(None),
             clipboard_last_synced: Mutex::new(None),
+            calls: Mutex::new(Vec::new()),
+            messages: Mutex::new(crate::messages::MessageState::default()),
+            contacts: Mutex::new(Vec::new()),
+            photos: Mutex::new(crate::photos::PhotoState::default()),
+            files: Mutex::new(crate::files::FileState::default()),
             app_handle,
             _mdns: mdns,
         })
