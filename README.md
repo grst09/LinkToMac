@@ -13,7 +13,8 @@ See [`docs/PLAN.md`](docs/PLAN.md) for the full roadmap and [`docs/PROTOCOL.md`]
 ## Structure
 
 ```
-mac-app/        SwiftUI menu-bar app (Swift Package Manager)
+mac-app/        SwiftUI menu-bar app (Swift Package Manager) — macOS only, being replaced by desktop-app/
+desktop-app/    Tauri (Rust + React) desktop app — cross-platform successor to mac-app/, in progress
 android-app/    Kotlin companion app (Gradle)
 docs/           Protocol and planning docs
 ```

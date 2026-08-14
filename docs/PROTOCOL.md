@@ -79,6 +79,7 @@ Call log and SMS both use a **full-snapshot-on-change** model rather than increm
 | `call.sync` | Android → Mac | `{calls: [CallLogEntry]}` — sent once right after `helloAck`, and again on any call log change |
 | `sms.sync` | Android → Mac | `{threads: [SmsThread]}` — sent once right after `helloAck`, and again on any SMS change |
 | `sms.send` | Mac → Android | `{address, body}` — Android sends via `SmsManager`; result isn't separately ack'd, the next `sms.sync` reflects it |
+| `sms.refresh` | Mac → Android | `{}` — forces an immediate re-read/push, for the Mac's manual Sync button, same pattern as `contacts.refresh` below |
 
 ```
 CallLogEntry = {id, number, contactName?, type, date, durationSeconds}
