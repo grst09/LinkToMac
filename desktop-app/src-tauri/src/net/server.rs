@@ -37,6 +37,10 @@ pub struct AppState {
     /// Single pending pairing session at a time, matching the old app's behavior — see
     /// `beginNewPairingSession`/`activePairingToken` in `ConnectionServer.swift`.
     pub active_pairing_token: Mutex<Option<Vec<u8>>>,
+    /// The paired device id currently holding the live connection, if any — mirrors
+    /// `activeDeviceIdIfConnected` in `ConnectionServer.swift`, so the UI can mark the right
+    /// row in the paired-devices list without guessing from connection state alone.
+    pub active_device_id: Mutex<Option<String>>,
     app_handle: tauri::AppHandle,
     _mdns: ServiceDaemon,
 }
@@ -52,6 +56,7 @@ impl AppState {
             identity,
             paired_devices: Mutex::new(paired_devices),
             active_pairing_token: Mutex::new(None),
+            active_device_id: Mutex::new(None),
             app_handle,
             _mdns: mdns,
         })
@@ -63,6 +68,57 @@ struct PairedEvent {
     device_id: String,
     device_name: String,
     is_new_pairing: bool,
+}
+
+#[derive(Serialize, Clone)]
+struct DisconnectedEvent {
+    device_id: String,
+}
+
+/// Safe-to-expose subset of `PairedDevice` — no `deviceToken`/`pairingSalt`, those are session
+/// secrets and never need to reach the frontend.
+#[derive(Serialize)]
+pub struct PairedDeviceSummary {
+    id: String,
+    device_name: String,
+    paired_at: String,
+    is_active: bool,
+}
+
+#[tauri::command]
+pub async fn list_paired_devices(
+    state: tauri::State<'_, Arc<AppState>>,
+) -> Result<Vec<PairedDeviceSummary>, String> {
+    let paired = state.paired_devices.lock().await;
+    let active_id = state.active_device_id.lock().await;
+    Ok(paired
+        .devices()
+        .iter()
+        .map(|d| PairedDeviceSummary {
+            id: d.id.clone(),
+            device_name: d.device_name.clone(),
+            paired_at: d.paired_at.clone(),
+            is_active: active_id.as_deref() == Some(d.id.as_str()),
+        })
+        .collect())
+}
+
+/// Mirrors `forgetDevice` in `ConnectionServer.swift` — removes stored credentials entirely;
+/// that phone will need a fresh QR pair to reconnect. Doesn't attempt to sever a currently-live
+/// connection to that device (the WebSocket handle for the active connection isn't threaded
+/// through to shared state yet — a small gap, not a Phase B blocker, since forgetting a device
+/// you're not actively using is the common case this is for).
+#[tauri::command]
+pub async fn forget_device(
+    state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<(), String> {
+    state
+        .paired_devices
+        .lock()
+        .await
+        .remove(&id)
+        .map_err(|e| e.to_string())
 }
 
 /// Tauri command: starts a new pairing session (single-use token, matching
@@ -237,12 +293,22 @@ async fn handle_connection(
             is_new_pairing: result.is_new_pairing,
         },
     );
+    *state.active_device_id.lock().await = Some(device_id_for_log.clone());
 
     // Step 5: minimal post-handshake loop for Phase A — decrypt and log; answer ping/pong so
     // Android's 45s keepalive timeout doesn't fire. Full message dispatch (notifications,
-    // calls, files, etc.) is later-phase work per the Tauri-rewrite plan.
-    while let Some(msg) = read.next().await {
-        let msg = msg?;
+    // calls, files, etc.) is later-phase work per the Tauri-rewrite plan. Loop exit (clean
+    // close, error, or EOF) always falls through to the cleanup below — no early `?` return
+    // that would skip clearing `active_device_id`/emitting `disconnected`.
+    loop {
+        let msg = match read.next().await {
+            Some(Ok(msg)) => msg,
+            Some(Err(e)) => {
+                tracing::warn!("read error from {}: {}", addr, e);
+                break;
+            }
+            None => break,
+        };
         match msg {
             WsMessage::Text(text) => {
                 if let Err(e) =
@@ -264,6 +330,17 @@ async fn handle_connection(
         }
     }
 
+    let mut active = state.active_device_id.lock().await;
+    if active.as_deref() == Some(device_id_for_log.as_str()) {
+        *active = None;
+    }
+    drop(active);
+    let _ = state.app_handle.emit(
+        "disconnected",
+        DisconnectedEvent {
+            device_id: device_id_for_log.clone(),
+        },
+    );
     tracing::info!("disconnected: device {}", device_id_for_log);
     Ok(())
 }

@@ -1,92 +1,50 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import QRCode from "qrcode";
-import "./App.css";
+import { AnimatePresence, motion } from "framer-motion";
+import { Sidebar } from "./components/Sidebar";
+import { ComingSoon } from "./components/ComingSoon";
+import { ThisDeviceView } from "./components/ThisDeviceView";
+import { sectionMeta, type SectionId } from "./theme/sections";
+import { initConnectionListeners } from "./store/connection";
 
-// Phase A verification page only — proves the Rust backend's handshake works end to end
-// (pairing QR -> Android scans -> paired). The real, animated/icon-rich UI described in the
-// Tauri-rewrite plan is Phase B+ scope, built on top of this once the backend is proven out.
-
-interface PairingQrPayload {
-  host: string;
-  port: number;
-  pairingToken: string;
-  macDeviceId: string;
-}
-
-interface PairedEvent {
-  device_id: string;
-  device_name: string;
-  is_new_pairing: boolean;
-}
+const COMING_SOON_DETAIL: Record<Exclude<SectionId, "device">, string> = {
+  notifications: "Mirrored notifications from your phone will show up here.",
+  messages: "SMS threads and reply-from-Mac will show up here.",
+  photos: "A synced photo grid from your phone will show up here.",
+  files: "Browse, upload, and download files from your phone's storage.",
+  contacts: "Your phone's contacts, with call and message actions.",
+  mirroring: "See and control your phone's screen from your Mac.",
+  settings: "App settings aren't built yet — for now there's nothing to configure.",
+};
 
 function App() {
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
-  const [payload, setPayload] = useState<PairingQrPayload | null>(null);
-  const [pairedEvents, setPairedEvents] = useState<PairedEvent[]>([]);
-  const [error, setError] = useState<string | null>(null);
+  const [selection, setSelection] = useState<SectionId>("device");
 
   useEffect(() => {
-    const unlisten = listen<PairedEvent>("paired", (event) => {
-      setPairedEvents((prev) => [event.payload, ...prev]);
-    });
-    return () => {
-      unlisten.then((f) => f());
-    };
+    initConnectionListeners();
   }, []);
 
-  async function beginPairing() {
-    setError(null);
-    try {
-      const result = await invoke<PairingQrPayload>("begin_pairing");
-      setPayload(result);
-      const dataUrl = await QRCode.toDataURL(JSON.stringify(result), {
-        width: 280,
-        margin: 2,
-      });
-      setQrDataUrl(dataUrl);
-    } catch (e) {
-      setError(String(e));
-    }
-  }
-
   return (
-    <main className="container">
-      <h1>LinkToMac — Phase A</h1>
-      <p>Scan this QR with the phone's LinkToMac app to pair.</p>
-
-      <button onClick={beginPairing}>
-        {payload ? "Generate new QR" : "Pair Device"}
-      </button>
-
-      {error && <p style={{ color: "red" }}>{error}</p>}
-
-      {qrDataUrl && (
-        <div style={{ marginTop: 16 }}>
-          <img src={qrDataUrl} alt="Pairing QR code" />
-          <p>
-            <code>
-              {payload?.host}:{payload?.port}
-            </code>
-          </p>
-        </div>
-      )}
-
-      <h2>Connection log</h2>
-      {pairedEvents.length === 0 ? (
-        <p>No connections yet.</p>
-      ) : (
-        <ul style={{ textAlign: "left" }}>
-          {pairedEvents.map((e, i) => (
-            <li key={i}>
-              <strong>{e.device_name}</strong> ({e.device_id}) —{" "}
-              {e.is_new_pairing ? "new pairing" : "reconnect"}
-            </li>
-          ))}
-        </ul>
-      )}
-    </main>
+    <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-neutral-950">
+      <Sidebar selection={selection} onSelect={setSelection} />
+      <main className="flex-1 overflow-hidden">
+        <AnimatePresence mode="wait">
+          <motion.div
+            key={selection}
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.15 }}
+            className="h-full"
+          >
+            {selection === "device" ? (
+              <ThisDeviceView />
+            ) : (
+              <ComingSoon section={sectionMeta(selection)} detail={COMING_SOON_DETAIL[selection]} />
+            )}
+          </motion.div>
+        </AnimatePresence>
+      </main>
+    </div>
   );
 }
 

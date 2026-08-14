@@ -17,7 +17,11 @@ pub fn run() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![net::server::begin_pairing])
+        .invoke_handler(tauri::generate_handler![
+            net::server::begin_pairing,
+            net::server::list_paired_devices,
+            net::server::forget_device
+        ])
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let identity = IdentityStore::load_or_create(&app_data_dir)?;
