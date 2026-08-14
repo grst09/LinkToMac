@@ -1,13 +1,15 @@
 import { motion } from "framer-motion";
 import { Smartphone, Wifi } from "lucide-react";
 import { useConnectionStore } from "../store/connection";
+import { BatteryIndicator } from "./BatteryIndicator";
 
 /** Compact device-status card pinned above the sidebar nav list. Ported from
  *  SidebarDeviceCard.swift — connection dot color/text, device name, wifi glyph when
- *  connected. The disconnect/reconnect toggle from the old app isn't wired up yet (the Rust
- *  server doesn't support runtime start/stop of the listener yet — see docs/PLAN.md). */
+ *  connected, battery when known. The disconnect/reconnect toggle from the old app isn't
+ *  wired up yet (the Rust server doesn't support runtime start/stop of the listener yet —
+ *  see docs/PLAN.md). */
 export function DeviceCard() {
-  const { status, deviceName } = useConnectionStore();
+  const { status, deviceName, deviceStatus } = useConnectionStore();
   const connected = status === "connected";
 
   return (
@@ -31,6 +33,11 @@ export function DeviceCard() {
           </div>
         </div>
       </div>
+      {connected && deviceStatus && (
+        <div className="mt-1.5 pl-[30px]">
+          <BatteryIndicator status={deviceStatus} />
+        </div>
+      )}
     </div>
   );
 }

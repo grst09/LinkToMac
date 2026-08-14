@@ -3,11 +3,14 @@ import { AnimatePresence, motion } from "framer-motion";
 import { Sidebar } from "./components/Sidebar";
 import { ComingSoon } from "./components/ComingSoon";
 import { ThisDeviceView } from "./components/ThisDeviceView";
+import { NotificationsView } from "./components/NotificationsView";
 import { sectionMeta, type SectionId } from "./theme/sections";
 import { initConnectionListeners } from "./store/connection";
+import { initNotificationListeners } from "./store/notifications";
 
-const COMING_SOON_DETAIL: Record<Exclude<SectionId, "device">, string> = {
-  notifications: "Mirrored notifications from your phone will show up here.",
+type PlaceholderSectionId = Exclude<SectionId, "device" | "notifications">;
+
+const COMING_SOON_DETAIL: Record<PlaceholderSectionId, string> = {
   messages: "SMS threads and reply-from-Mac will show up here.",
   photos: "A synced photo grid from your phone will show up here.",
   files: "Browse, upload, and download files from your phone's storage.",
@@ -21,6 +24,7 @@ function App() {
 
   useEffect(() => {
     initConnectionListeners();
+    initNotificationListeners();
   }, []);
 
   return (
@@ -38,8 +42,13 @@ function App() {
           >
             {selection === "device" ? (
               <ThisDeviceView />
+            ) : selection === "notifications" ? (
+              <NotificationsView />
             ) : (
-              <ComingSoon section={sectionMeta(selection)} detail={COMING_SOON_DETAIL[selection]} />
+              <ComingSoon
+                section={sectionMeta(selection)}
+                detail={COMING_SOON_DETAIL[selection as PlaceholderSectionId]}
+              />
             )}
           </motion.div>
         </AnimatePresence>

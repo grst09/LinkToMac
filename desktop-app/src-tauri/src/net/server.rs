@@ -31,6 +31,16 @@ use crate::store::paired_devices::PairedDeviceStore;
 pub const PORT: u16 = 53821;
 const SERVICE_TYPE: &str = "_linktomac._tcp.local.";
 
+/// A handle to the currently-live connection, if any — lets code outside `handle_connection`
+/// (the clipboard poll loop, the `dismiss_notification`/etc. Tauri commands) send outbound
+/// messages without needing direct access to the WebSocket itself. Only one connection is
+/// live at a time (matching `ConnectionServer.swift`'s single-active-connection model), so a
+/// single slot is enough — no per-connection routing needed.
+struct ActiveConnection {
+    sender: tokio::sync::mpsc::UnboundedSender<WsMessage>,
+    session_key: [u8; 32],
+}
+
 pub struct AppState {
     pub identity: IdentityStore,
     pub paired_devices: Mutex<PairedDeviceStore>,
@@ -41,7 +51,16 @@ pub struct AppState {
     /// `activeDeviceIdIfConnected` in `ConnectionServer.swift`, so the UI can mark the right
     /// row in the paired-devices list without guessing from connection state alone.
     pub active_device_id: Mutex<Option<String>>,
-    app_handle: tauri::AppHandle,
+    active_connection: Mutex<Option<ActiveConnection>>,
+    /// Newest-first, capped at 200, deduped by id — matches `NotificationStore.swift` exactly.
+    pub notifications: Mutex<Vec<crate::protocol::envelope::NotificationPostedPayload>>,
+    pub device_status: Mutex<Option<crate::protocol::envelope::DeviceStatusPayload>>,
+    /// The last clipboard text synced in *either* direction — shared between the poll loop
+    /// (local → phone) and the receive handler (phone → local) so neither echoes a value that
+    /// just arrived from the other side. Matches `ClipboardSyncManager.swift`'s single
+    /// `lastSyncedText` exactly (not separate sent/received trackers).
+    pub clipboard_last_synced: Mutex<Option<String>>,
+    pub app_handle: tauri::AppHandle,
     _mdns: ServiceDaemon,
 }
 
@@ -57,10 +76,41 @@ impl AppState {
             paired_devices: Mutex::new(paired_devices),
             active_pairing_token: Mutex::new(None),
             active_device_id: Mutex::new(None),
+            active_connection: Mutex::new(None),
+            notifications: Mutex::new(Vec::new()),
+            device_status: Mutex::new(None),
+            clipboard_last_synced: Mutex::new(None),
             app_handle,
             _mdns: mdns,
         })
     }
+}
+
+/// Sends an outbound message to whichever device currently holds the live connection, if any.
+/// Used by the clipboard poll loop and by Tauri commands (`dismiss_notification`, later
+/// `sms.send`/`contacts.dial`/etc.) that need to talk to the phone from outside the
+/// per-connection task. Silently does nothing if nothing's connected — callers that need to
+/// know can check `active_device_id` first.
+pub async fn send_to_active<T: Serialize>(
+    state: &AppState,
+    message_type: &str,
+    payload: &T,
+) -> anyhow::Result<()> {
+    let guard = state.active_connection.lock().await;
+    let Some(conn) = guard.as_ref() else {
+        anyhow::bail!("no active connection");
+    };
+    let message = Message {
+        message_type: message_type.to_string(),
+        payload: serde_json::to_value(payload)?,
+    };
+    let plaintext = serde_json::to_vec(&message)?;
+    let frame = secure_channel::seal(&plaintext, &conn.session_key)?;
+    let text = serde_json::to_string(&frame)?;
+    conn.sender
+        .send(WsMessage::Text(text.into()))
+        .map_err(|_| anyhow::anyhow!("outbound channel closed"))?;
+    Ok(())
 }
 
 #[derive(Serialize, Clone)]
@@ -295,41 +345,62 @@ async fn handle_connection(
     );
     *state.active_device_id.lock().await = Some(device_id_for_log.clone());
 
-    // Step 5: minimal post-handshake loop for Phase A — decrypt and log; answer ping/pong so
-    // Android's 45s keepalive timeout doesn't fire. Full message dispatch (notifications,
-    // calls, files, etc.) is later-phase work per the Tauri-rewrite plan. Loop exit (clean
-    // close, error, or EOF) always falls through to the cleanup below — no early `?` return
-    // that would skip clearing `active_device_id`/emitting `disconnected`.
+    let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
+    *state.active_connection.lock().await = Some(ActiveConnection {
+        sender: outbound_tx,
+        session_key: result.session_key,
+    });
+
+    // Step 5: post-handshake loop — decrypt incoming messages and dispatch them (see
+    // dispatch.rs), answer ping/pong so Android's 45s keepalive timeout doesn't fire, and
+    // forward anything arriving on `outbound_rx` (from the clipboard poll loop, Tauri commands
+    // like `dismiss_notification`, etc. — see `send_to_active`). Loop exit (clean close,
+    // error, or EOF) always falls through to the cleanup below — no early `?` return that
+    // would skip clearing `active_device_id`/`active_connection` or emitting `disconnected`.
     loop {
-        let msg = match read.next().await {
-            Some(Ok(msg)) => msg,
-            Some(Err(e)) => {
-                tracing::warn!("read error from {}: {}", addr, e);
-                break;
-            }
-            None => break,
-        };
-        match msg {
-            WsMessage::Text(text) => {
-                if let Err(e) =
-                    handle_encrypted_text(&text, &result.session_key, &mut write).await
-                {
-                    tracing::warn!("failed to handle message from {}: {}", addr, e);
-                }
-            }
-            WsMessage::Binary(data) => {
-                match secure_channel::open_raw(&data, &result.session_key) {
-                    Ok(plaintext) => {
-                        tracing::debug!("received {} bytes of binary (mirror) data", plaintext.len());
+        tokio::select! {
+            incoming = read.next() => {
+                let msg = match incoming {
+                    Some(Ok(msg)) => msg,
+                    Some(Err(e)) => {
+                        tracing::warn!("read error from {}: {}", addr, e);
+                        break;
                     }
-                    Err(e) => tracing::warn!("failed to decrypt binary frame: {}", e),
+                    None => break,
+                };
+                match msg {
+                    WsMessage::Text(text) => {
+                        if let Err(e) =
+                            handle_encrypted_text(&text, &result.session_key, &mut write, &state).await
+                        {
+                            tracing::warn!("failed to handle message from {}: {}", addr, e);
+                        }
+                    }
+                    WsMessage::Binary(data) => {
+                        match secure_channel::open_raw(&data, &result.session_key) {
+                            Ok(plaintext) => {
+                                tracing::debug!("received {} bytes of binary (mirror) data", plaintext.len());
+                            }
+                            Err(e) => tracing::warn!("failed to decrypt binary frame: {}", e),
+                        }
+                    }
+                    WsMessage::Close(_) => break,
+                    _ => {}
                 }
             }
-            WsMessage::Close(_) => break,
-            _ => {}
+            outgoing = outbound_rx.recv() => {
+                let Some(msg) = outgoing else { continue };
+                if let Err(e) = write.send(msg).await {
+                    tracing::warn!("failed to send outbound message to {}: {}", addr, e);
+                    break;
+                }
+            }
         }
     }
 
+    let mut active_conn = state.active_connection.lock().await;
+    *active_conn = None;
+    drop(active_conn);
     let mut active = state.active_device_id.lock().await;
     if active.as_deref() == Some(device_id_for_log.as_str()) {
         *active = None;
@@ -349,6 +420,7 @@ async fn handle_encrypted_text(
     text: &str,
     session_key: &[u8; 32],
     write: &mut WsWriter,
+    state: &Arc<AppState>,
 ) -> anyhow::Result<()> {
     let frame: EncryptedFrame = serde_json::from_str(text)?;
     let plaintext = secure_channel::open(&frame, session_key)?;
@@ -359,8 +431,7 @@ async fn handle_encrypted_text(
         return Ok(());
     }
 
-    tracing::info!("received {} (dispatch not yet implemented)", message.message_type);
-    Ok(())
+    crate::dispatch::handle(message, state).await
 }
 
 struct HandshakeResult {

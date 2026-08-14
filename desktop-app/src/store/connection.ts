@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 
 export type ConnectionStatus = "idle" | "connected";
@@ -13,10 +14,16 @@ interface DisconnectedEvent {
   device_id: string;
 }
 
+export interface DeviceStatus {
+  batteryPercent: number;
+  isCharging: boolean;
+}
+
 interface ConnectionState {
   status: ConnectionStatus;
   deviceId: string | null;
   deviceName: string | null;
+  deviceStatus: DeviceStatus | null;
   /** Bumped on every paired/disconnected event so components (e.g. the paired-devices list)
    *  know to re-fetch from the backend rather than needing their own event wiring. */
   revision: number;
@@ -26,6 +33,7 @@ export const useConnectionStore = create<ConnectionState>(() => ({
   status: "idle",
   deviceId: null,
   deviceName: null,
+  deviceStatus: null,
   revision: 0,
 }));
 
@@ -36,6 +44,10 @@ let initialized = false;
 export function initConnectionListeners() {
   if (initialized) return;
   initialized = true;
+
+  invoke<DeviceStatus | null>("get_device_status").then((deviceStatus) => {
+    if (deviceStatus) useConnectionStore.setState({ deviceStatus });
+  });
 
   listen<PairedEvent>("paired", (event) => {
     useConnectionStore.setState((s) => ({
@@ -51,5 +63,9 @@ export function initConnectionListeners() {
       if (s.deviceId !== event.payload.device_id) return s;
       return { status: "idle", deviceId: null, deviceName: null, revision: s.revision + 1 };
     });
+  });
+
+  listen<DeviceStatus>("device-status", (event) => {
+    useConnectionStore.setState({ deviceStatus: event.payload });
   });
 }

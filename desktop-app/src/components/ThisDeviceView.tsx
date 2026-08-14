@@ -4,8 +4,9 @@ import { AnimatePresence, motion } from "framer-motion";
 import { CheckCircle2, QrCode, X } from "lucide-react";
 import QRCode from "qrcode";
 import { SectionHeader } from "./SectionHeader";
+import { BatteryIndicator } from "./BatteryIndicator";
 import { sectionMeta } from "../theme/sections";
-import { useConnectionStore } from "../store/connection";
+import { useConnectionStore, type DeviceStatus } from "../store/connection";
 
 interface PairingQrPayload {
   host: string;
@@ -26,7 +27,7 @@ interface PairedDeviceSummary {
  *  across DeviceStatusView.swift (status) and MenuBarView.swift (pairing + device list) — this
  *  app doesn't have a menu-bar tray popover yet (later-phase work), so both live here for now. */
 export function ThisDeviceView() {
-  const { status, deviceName } = useConnectionStore();
+  const { status, deviceName, deviceStatus } = useConnectionStore();
   const revision = useConnectionStore((s) => s.revision);
 
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
@@ -71,7 +72,7 @@ export function ThisDeviceView() {
       <SectionHeader section={sectionMeta("device")} subtitle={deviceName ?? undefined} />
 
       <div className="flex-1 overflow-y-auto p-6">
-        <StatusBanner connected={status === "connected"} deviceName={deviceName} />
+        <StatusBanner connected={status === "connected"} deviceName={deviceName} deviceStatus={deviceStatus} />
 
         <div className="mt-6">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
@@ -156,7 +157,15 @@ export function ThisDeviceView() {
   );
 }
 
-function StatusBanner({ connected, deviceName }: { connected: boolean; deviceName: string | null }) {
+function StatusBanner({
+  connected,
+  deviceName,
+  deviceStatus,
+}: {
+  connected: boolean;
+  deviceName: string | null;
+  deviceStatus: DeviceStatus | null;
+}) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 4 }}
@@ -168,7 +177,7 @@ function StatusBanner({ connected, deviceName }: { connected: boolean; deviceNam
       }`}
     >
       {connected ? <CheckCircle2 className="h-5 w-5" /> : <QrCode className="h-5 w-5" />}
-      <div>
+      <div className="flex-1">
         <p className="text-[13px] font-medium">
           {connected ? `${deviceName} is connected` : "Waiting to pair"}
         </p>
@@ -178,6 +187,7 @@ function StatusBanner({ connected, deviceName }: { connected: boolean; deviceNam
             : "Pair a device below, or reconnect an already-paired phone by opening LinkToMac on it."}
         </p>
       </div>
+      {connected && deviceStatus && <BatteryIndicator status={deviceStatus} className="opacity-90" />}
     </motion.div>
   );
 }
