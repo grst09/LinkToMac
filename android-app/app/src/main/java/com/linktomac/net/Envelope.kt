@@ -64,7 +64,8 @@ data class NotificationPostedPayload(
     val subText: String? = null,
     val category: String? = null,
     val postedAt: Double,
-    val actions: List<NotificationAction> = emptyList()
+    val actions: List<NotificationAction> = emptyList(),
+    val iconBase64: String? = null
 )
 
 @Serializable

@@ -147,11 +147,13 @@ private final class MirrorNSView: NSView {
     override func mouseDown(with event: NSEvent) {
         dragStart = convert(event.locationInWindow, from: nil)
         print("LinkToMac: mouseDown at \(dragStart!), server=\(server != nil)")
+        fflush(stdout)
     }
 
     override func mouseUp(with event: NSEvent) {
         guard let start = dragStart else {
             print("LinkToMac: mouseUp with no dragStart")
+            fflush(stdout)
             return
         }
         let end = convert(event.locationInWindow, from: nil)
@@ -159,11 +161,13 @@ private final class MirrorNSView: NSView {
         if distance < 4 {
             let n = normalize(start)
             print("LinkToMac: sending tap x=\(n.x) y=\(n.y)")
+            fflush(stdout)
             server?.sendMirrorTap(x: n.x, y: n.y)
         } else {
             let n1 = normalize(start)
             let n2 = normalize(end)
             print("LinkToMac: sending swipe from \(n1) to \(n2)")
+            fflush(stdout)
             server?.sendMirrorSwipe(startX: n1.x, startY: n1.y, endX: n2.x, endY: n2.y, durationMs: 300)
         }
         dragStart = nil

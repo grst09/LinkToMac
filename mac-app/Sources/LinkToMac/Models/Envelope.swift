@@ -56,6 +56,7 @@ struct NotificationPostedPayload: Codable, Identifiable {
     let category: String?
     let postedAt: Double
     let actions: [NotificationAction]
+    let iconBase64: String?
 }
 
 struct NotificationRemovedPayload: Codable {

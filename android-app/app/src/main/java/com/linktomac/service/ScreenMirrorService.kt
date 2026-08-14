@@ -98,6 +98,7 @@ class ScreenMirrorService : Service() {
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, width, height).apply {
             setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             setInteger(MediaFormat.KEY_BIT_RATE, BIT_RATE)
+            setInteger(MediaFormat.KEY_BITRATE_MODE, MediaCodecInfo.EncoderCapabilities.BITRATE_MODE_VBR)
             setInteger(MediaFormat.KEY_FRAME_RATE, TARGET_FPS)
             setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 2)
         }
@@ -206,7 +207,7 @@ class ScreenMirrorService : Service() {
         private const val ACTION_STOP = "com.linktomac.action.MIRROR_STOP"
         private const val EXTRA_RESULT_CODE = "result_code"
         private const val EXTRA_RESULT_DATA = "result_data"
-        private const val BIT_RATE = 4_000_000
+        private const val BIT_RATE = 16_000_000
         private const val TARGET_FPS = 30
         private const val DEQUEUE_TIMEOUT_US = 10_000L
 
@@ -219,11 +220,14 @@ class ScreenMirrorService : Service() {
             context.startForegroundService(intent)
         }
 
+        /** Uses `stopService`, not `startForegroundService` — this service's manifest-declared
+         *  `foregroundServiceType="mediaProjection"` means any `startForeground()` call requires
+         *  a currently-active capture grant. If the process already died (memory pressure, OEM
+         *  background kill), starting it fresh just to tell it to stop has no such grant and
+         *  crash-loops instead. `stopService` is a no-op if nothing is running, and if the
+         *  service *is* running, `onDestroy()` already calls `stopCapture("requested")`. */
         fun stop(context: Context) {
-            val intent = Intent(context, ScreenMirrorService::class.java).apply {
-                action = ACTION_STOP
-            }
-            context.startForegroundService(intent)
+            context.stopService(Intent(context, ScreenMirrorService::class.java))
         }
     }
 }

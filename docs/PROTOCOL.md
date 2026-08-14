@@ -65,7 +65,7 @@ Every frame after the handshake is:
 | type | direction | payload |
 |---|---|---|
 | `serverHello` / `hello` / `helloAck` | see above | see above |
-| `notification.posted` | Android → Mac | `{id, packageName, appName, title, text, subText, category, postedAt, actions: [{title, actionId}]}` |
+| `notification.posted` | Android → Mac | `{id, packageName, appName, title, text, subText, category, postedAt, actions: [{title, actionId}], iconBase64}` — `iconBase64` is the app's launcher icon (96×96 PNG, `PackageManager.getApplicationIcon`), not the notification's own small icon; cached per package on the Android side so it's only drawn/encoded once, not on every notification |
 | `notification.removed` | Android → Mac | `{id}` |
 | `notification.dismiss` | Mac → Android | `{id}` (user dismissed on Mac; Android cancels it on the phone) |
 | `ping` / `pong` | either | `{}` — keepalive, sent every 20s; connection considered dead after 45s of silence |

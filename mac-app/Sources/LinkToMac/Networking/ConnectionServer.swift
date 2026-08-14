@@ -489,12 +489,16 @@ final class ConnectionServer {
     func sendMirrorTap(x: Double, y: Double) {
         guard let connection = activeConnection else {
             print("LinkToMac: sendMirrorTap — no active connection")
+            fflush(stdout)
             return
         }
         do {
             try send(type: "mirror.tap", payload: MirrorTapPayload(x: x, y: y), on: connection)
+            print("LinkToMac: sendMirrorTap sent x=\(x) y=\(y)")
+            fflush(stdout)
         } catch {
             print("LinkToMac: sendMirrorTap failed: \(error)")
+            fflush(stdout)
         }
     }
 

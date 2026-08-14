@@ -33,7 +33,7 @@ object H264Utils {
     /** Scales down to a max longer-edge dimension (keeps encode/bandwidth cost reasonable —
      *  native resolution on a modern phone is overkill for a mirrored control view) while
      *  keeping both dimensions even, which H.264 encoders require. */
-    fun scaledDimensions(nativeWidth: Int, nativeHeight: Int, maxLongEdge: Int = 1280): Pair<Int, Int> {
+    fun scaledDimensions(nativeWidth: Int, nativeHeight: Int, maxLongEdge: Int = 2560): Pair<Int, Int> {
         val longEdge = maxOf(nativeWidth, nativeHeight)
         val scale = if (longEdge > maxLongEdge) maxLongEdge.toFloat() / longEdge else 1f
         var width = (nativeWidth * scale).toInt()
