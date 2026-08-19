@@ -90,7 +90,7 @@ export function FilesView() {
     if (entry.isDirectory) {
       listFiles(full);
     } else {
-      downloadFile(full);
+      downloadFile(full, true);
     }
   }
 
@@ -244,6 +244,7 @@ export function FilesView() {
           hasClipboard={!!clipboard}
           onClose={() => setMenu(null)}
           onRename={() => menu.entry && setRenaming(menu.entry)}
+          onDownload={() => menu.entry && downloadFile(joinPath(currentPath, menu.entry.name), false)}
           onCut={() => menu.entry && cutToClipboard(joinPath(currentPath, menu.entry.name), menu.entry.name)}
           onCopy={() => menu.entry && copyToClipboard(joinPath(currentPath, menu.entry.name), menu.entry.name)}
           onPaste={() => pasteClipboard()}
@@ -331,9 +332,13 @@ function Banner({
 }
 
 function EntryIcon({ entry }: { entry: FileEntry }) {
-  if (!entry.isDirectory) return <FileIcon className="text-neutral-400" />;
+  // Lucide icons default to a fixed 24x24 SVG unless given an explicit size class — `h-full
+  // w-full` makes the icon fill whatever box its caller sizes (h-9 w-9 in grid view, h-4 w-4 in
+  // list view) instead of always rendering at 24px regardless of that box, which was throwing
+  // off centering in grid view and overflowing into the filename text in list view.
+  if (!entry.isDirectory) return <FileIcon className="h-full w-full text-neutral-400" />;
   const { icon: Icon, className } = folderIconFor(entry.name);
-  return <Icon className={className} />;
+  return <Icon className={`h-full w-full ${className}`} />;
 }
 
 function FileGridItem({
@@ -359,14 +364,16 @@ function FileGridItem({
       }}
       onDoubleClick={onDoubleClick}
       onContextMenu={onContextMenu}
-      className={`flex flex-col items-center gap-1.5 rounded-lg p-2 text-center transition-colors ${
+      className={`flex w-full min-w-0 flex-col items-center gap-1.5 rounded-lg p-2 text-center transition-colors ${
         selected ? "bg-blue-500/20" : "hover:bg-black/[0.03] dark:hover:bg-white/[0.05]"
       } ${cutPending ? "opacity-50" : ""}`}
     >
-      <div className="h-9 w-9">
+      <div className="h-9 w-9 shrink-0">
         <EntryIcon entry={entry} />
       </div>
-      <span className="line-clamp-2 h-[30px] text-xs text-neutral-700 dark:text-neutral-300">{entry.name}</span>
+      <span className="line-clamp-2 h-[30px] w-full break-words text-xs text-neutral-700 dark:text-neutral-300">
+        {entry.name}
+      </span>
     </button>
   );
 }
@@ -417,6 +424,7 @@ function ContextMenu({
   hasClipboard,
   onClose,
   onRename,
+  onDownload,
   onCut,
   onCopy,
   onPaste,
@@ -427,6 +435,7 @@ function ContextMenu({
   hasClipboard: boolean;
   onClose: () => void;
   onRename: () => void;
+  onDownload: () => void;
   onCut: () => void;
   onCopy: () => void;
   onPaste: () => void;
@@ -435,6 +444,7 @@ function ContextMenu({
 }) {
   const items = menu.entry
     ? [
+        ...(menu.entry.isDirectory ? [] : [{ label: "Download", action: onDownload }]),
         { label: "Rename…", action: onRename },
         { label: "Cut", action: onCut },
         { label: "Copy", action: onCopy },

@@ -86,6 +86,10 @@ class MacConnection(
     var onContactCreateRequested: ((ContactCreatePayload) -> Unit)? = null
     var onContactDeleteRequested: ((id: String) -> Unit)? = null
     var onMessagesRefreshRequested: (() -> Unit)? = null
+    var onNotesRefreshRequested: (() -> Unit)? = null
+    var onNoteCreateRequested: ((NoteCreatePayload) -> Unit)? = null
+    var onNoteUpdateRequested: ((NoteUpdatePayload) -> Unit)? = null
+    var onNoteDeleteRequested: ((id: String) -> Unit)? = null
 
     /** Connect using a freshly scanned QR pairing payload. */
     fun connectForPairing(payload: PairingQrPayload) {
@@ -252,6 +256,19 @@ class MacConnection(
                     val payload = json.decodeFromJsonElement<ContactDeletePayload>(envelope.payload)
                     onContactDeleteRequested?.invoke(payload.id)
                 }
+                "notes.refresh" -> onNotesRefreshRequested?.invoke()
+                "notes.create" -> {
+                    val payload = json.decodeFromJsonElement<NoteCreatePayload>(envelope.payload)
+                    onNoteCreateRequested?.invoke(payload)
+                }
+                "notes.update" -> {
+                    val payload = json.decodeFromJsonElement<NoteUpdatePayload>(envelope.payload)
+                    onNoteUpdateRequested?.invoke(payload)
+                }
+                "notes.delete" -> {
+                    val payload = json.decodeFromJsonElement<NoteDeletePayload>(envelope.payload)
+                    onNoteDeleteRequested?.invoke(payload.id)
+                }
                 "pong" -> {}
             }
         } catch (e: Exception) {
@@ -412,6 +429,22 @@ class MacConnection(
 
     fun sendContactDeleteResult(id: String, success: Boolean, error: String? = null) {
         send("contacts.deleteResult", json.encodeToJsonElement(ContactDeleteResultPayload(id, success, error)))
+    }
+
+    fun sendNotesSync(notes: List<NoteEntry>) {
+        send("notes.sync", json.encodeToJsonElement(NotesSyncPayload(notes)))
+    }
+
+    fun sendNoteCreateResult(success: Boolean, error: String? = null) {
+        send("notes.createResult", json.encodeToJsonElement(NoteCreateResultPayload(success, error)))
+    }
+
+    fun sendNoteUpdateResult(id: String, success: Boolean, error: String? = null) {
+        send("notes.updateResult", json.encodeToJsonElement(NoteUpdateResultPayload(id, success, error)))
+    }
+
+    fun sendNoteDeleteResult(id: String, success: Boolean, error: String? = null) {
+        send("notes.deleteResult", json.encodeToJsonElement(NoteDeleteResultPayload(id, success, error)))
     }
 
     /** Binary WebSocket frame, not the JSON envelope — see docs/PROTOCOL.md's Phase 4 binary

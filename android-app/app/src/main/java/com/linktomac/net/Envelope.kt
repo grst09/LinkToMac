@@ -386,3 +386,57 @@ data class FilesTransferResultPayload(
     val success: Boolean,
     val error: String? = null
 )
+
+// Phase 8: notes
+
+@Serializable
+data class NoteEntry(
+    val id: String,
+    val title: String,
+    val body: String,
+    val createdAt: Double, // epoch millis
+    val updatedAt: Double // epoch millis
+)
+
+@Serializable
+data class NotesSyncPayload(
+    val notes: List<NoteEntry>
+)
+
+@Serializable
+data class NoteCreatePayload(
+    val title: String,
+    val body: String
+)
+
+@Serializable
+data class NoteCreateResultPayload(
+    val success: Boolean,
+    val error: String? = null
+)
+
+@Serializable
+data class NoteUpdatePayload(
+    val id: String,
+    val title: String,
+    val body: String
+)
+
+@Serializable
+data class NoteUpdateResultPayload(
+    val id: String,
+    val success: Boolean,
+    val error: String? = null
+)
+
+@Serializable
+data class NoteDeletePayload(
+    val id: String
+)
+
+@Serializable
+data class NoteDeleteResultPayload(
+    val id: String,
+    val success: Boolean,
+    val error: String? = null
+)

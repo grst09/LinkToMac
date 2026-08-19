@@ -4,3 +4,4 @@
 
 pub mod identity;
 pub mod paired_devices;
+pub mod settings;

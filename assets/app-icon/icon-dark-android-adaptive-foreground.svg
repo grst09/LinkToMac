@@ -1,0 +1,19 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="8" stdDeviation="10" flood-color="#000000" flood-opacity="0.35"/>
+    </filter>
+  </defs>
+
+  <g transform="translate(512,512) scale(0.8) translate(-560,-540)">
+    <g filter="url(#softShadow)">
+      <rect x="440" y="300" width="320" height="260" rx="28" fill="#ffffff"/>
+      <rect x="440" y="572" width="380" height="42" rx="18" fill="#ffffff"/>
+    </g>
+
+    <g filter="url(#softShadow)">
+      <rect x="300" y="380" width="220" height="400" rx="40" fill="#3DDC84"/>
+      <rect x="372" y="736" width="76" height="12" rx="6" fill="#0a0a0a"/>
+    </g>
+  </g>
+</svg>

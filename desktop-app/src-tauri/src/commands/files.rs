@@ -10,11 +10,6 @@ use crate::protocol::envelope::{
     FilesListRequestPayload, FilesRenamePayload, FilesTransferPayload, FilesUploadPayload,
 };
 
-/// Matches the server-side cap exactly (docs/PROTOCOL.md: enforced on both sides) — checked
-/// client-side before ever sending a byte, same as `FilesView.swift`'s upload guard. Download
-/// has no equivalent pre-check, also matching the old app (see docs/PLAN.md's Phase D notes).
-const MAX_TRANSFER_BYTES: usize = 50 * 1024 * 1024;
-
 #[derive(Serialize)]
 pub struct FilesSnapshot {
     current_path: String,
@@ -39,8 +34,16 @@ pub async fn list_files(state: tauri::State<'_, Arc<AppState>>, path: String) ->
         .map_err(|e| e.to_string())
 }
 
+/// `open: true` (double-click) opens the downloaded file with the OS default app once it
+/// arrives; `open: false` (the "Download" context-menu item) keeps the original behavior of
+/// saving it and revealing it in Finder — see `dispatch::files::download_result`.
 #[tauri::command]
-pub async fn download_file(state: tauri::State<'_, Arc<AppState>>, path: String) -> Result<(), String> {
+pub async fn download_file(
+    state: tauri::State<'_, Arc<AppState>>,
+    path: String,
+    open: bool,
+) -> Result<(), String> {
+    state.files.lock().await.pending_open_path = if open { Some(path.clone()) } else { None };
     send_to_active(&state, "files.download", &FilesDownloadRequestPayload { path })
         .await
         .map_err(|e| e.to_string())
@@ -54,9 +57,10 @@ pub async fn upload_file(
     data_base64: String,
     mime_type: String,
 ) -> Result<(), String> {
+    let max_transfer_mb = state.settings.lock().await.get().max_transfer_mb;
     let byte_len = data_base64.len() / 4 * 3; // close enough for a size-cap check on base64 text
-    if byte_len > MAX_TRANSFER_BYTES {
-        let message = format!("{name} is too large to transfer (50 MB max)");
+    if byte_len > (max_transfer_mb as usize) * 1024 * 1024 {
+        let message = format!("{name} is too large to transfer ({max_transfer_mb} MB max)");
         let _ = state.app_handle.emit("files-error", &message);
         return Err(message);
     }

@@ -1,6 +1,6 @@
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::Serialize;
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 
 use crate::net::server::{send_to_active, AppState};
 use crate::protocol::envelope::{
@@ -44,11 +44,24 @@ pub async fn download_result(payload: FilesDownloadResultPayload, state: &std::s
         return;
     };
 
-    let result = save_and_reveal(state, &payload.name, &data_base64).await;
+    let should_open = state.files.lock().await.pending_open_path.take() == Some(payload.path.clone());
+    let result = save_file(state, &payload.name, &data_base64, should_open).await;
     match result {
         Ok(()) => {
-            tracing::info!("files.downloadResult: saved and revealed {}", payload.name);
-            emit_success(state, format!("Downloaded {}", payload.name)).await;
+            tracing::info!(
+                "files.downloadResult: saved {} ({})",
+                payload.name,
+                if should_open { "opened" } else { "revealed" }
+            );
+            emit_success(
+                state,
+                if should_open {
+                    format!("Opening {}", payload.name)
+                } else {
+                    format!("Downloaded {}", payload.name)
+                },
+            )
+            .await;
         }
         Err(e) => {
             tracing::warn!("files.downloadResult: failed to save {}: {}", payload.name, e);
@@ -57,22 +70,25 @@ pub async fn download_result(payload: FilesDownloadResultPayload, state: &std::s
     }
 }
 
-async fn save_and_reveal(
+/// Saves the downloaded bytes to `~/Downloads/LinkToMac`, then either opens the file with the
+/// OS default app (double-click) or reveals it in Finder (the "Download" menu action) — see
+/// `commands::files::download_file`'s `open` flag.
+async fn save_file(
     state: &std::sync::Arc<AppState>,
     name: &str,
     data_base64: &str,
+    open: bool,
 ) -> Result<(), String> {
     let bytes = BASE64.decode(data_base64).map_err(|e| e.to_string())?;
-    let downloads_dir = state
-        .app_handle
-        .path()
-        .download_dir()
-        .map_err(|e| e.to_string())?;
-    let dest_dir = downloads_dir.join("LinkToMac");
+    let dest_dir = crate::files::downloads_dir(&state.app_handle)?;
     std::fs::create_dir_all(&dest_dir).map_err(|e| e.to_string())?;
     let dest = dest_dir.join(name);
     std::fs::write(&dest, bytes).map_err(|e| e.to_string())?;
-    tauri_plugin_opener::reveal_item_in_dir(&dest).map_err(|e| e.to_string())
+    if open {
+        tauri_plugin_opener::open_path(&dest, None::<&str>).map_err(|e| e.to_string())
+    } else {
+        tauri_plugin_opener::reveal_item_in_dir(&dest).map_err(|e| e.to_string())
+    }
 }
 
 pub async fn upload_result(payload: FilesUploadResultPayload, state: &std::sync::Arc<AppState>) {

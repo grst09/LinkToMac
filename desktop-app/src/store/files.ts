@@ -56,8 +56,10 @@ export async function listFiles(path: string) {
   await invoke("list_files", { path });
 }
 
-export async function downloadFile(path: string) {
-  await invoke("download_file", { path });
+/** `open: true` opens the file with the OS default app once downloaded (double-click);
+ *  `open: false` downloads it and reveals it in Finder (the "Download" context-menu item). */
+export async function downloadFile(path: string, open: boolean) {
+  await invoke("download_file", { path, open });
 }
 
 export async function uploadFile(path: string, name: string, dataBase64: string, mimeType: string) {

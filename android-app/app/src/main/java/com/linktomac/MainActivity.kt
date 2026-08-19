@@ -10,21 +10,34 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
+import androidx.compose.material3.Text
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import com.journeyapps.barcodescanner.ScanContract
 import com.linktomac.service.InputInjectionAccessibilityService
 import com.linktomac.service.ScreenMirrorService
 import com.linktomac.service.SyncForegroundService
+import com.linktomac.storage.AppSettingsStore
+import com.linktomac.storage.NoteStore
 import com.linktomac.storage.PairedDeviceStore
+import com.linktomac.ui.NotesScreen
 import com.linktomac.ui.PairingScreen
+import com.linktomac.ui.SettingsScreen
 import com.linktomac.ui.qrScanOptions
 
 class MainActivity : ComponentActivity() {
@@ -33,6 +46,15 @@ class MainActivity : ComponentActivity() {
     // EncryptedSharedPreferences from multiple instances backed by the same file is safe, and
     // this lets the UI show paired-device state without depending on the service being alive.
     private val pairedDeviceStore by lazy { PairedDeviceStore(applicationContext) }
+
+    // Same reasoning as pairedDeviceStore above — NotesScreen reads/writes this directly and
+    // pushes sync via SyncForegroundService.notifyNotesChangedLocally rather than needing a
+    // live reference to the service.
+    private val noteStore by lazy { NoteStore(applicationContext) }
+
+    // Same reasoning again — SettingsScreen toggles this directly; SyncForegroundService reads
+    // the same underlying file for the clipboard-sync gate (see its own appSettingsStore field).
+    private val appSettingsStore by lazy { AppSettingsStore(applicationContext) }
 
     private val notificationPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { }
@@ -91,24 +113,48 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    PairingScreen(
-                        isNotificationAccessGranted = { isNotificationAccessGranted() },
-                        onRequestNotificationAccess = { openNotificationAccessSettings() },
-                        isCallsAndMessagesAccessGranted = { isCallsAndMessagesAccessGranted() },
-                        onRequestCallsAndMessagesAccess = { requestCallsAndMessagesAccess() },
-                        isPhotoAccessGranted = { isPhotoAccessGranted() },
-                        onRequestPhotoAccess = { requestPhotoAccess() },
-                        isAccessibilityServiceEnabled = { isAccessibilityServiceEnabled() },
-                        onRequestAccessibilityAccess = { openAccessibilitySettings() },
-                        isFileAccessGranted = { isFileAccessGranted() },
-                        onRequestFileAccess = { requestFileAccess() },
-                        isPaired = { pairedDeviceStore.isPaired },
-                        pairedMacName = { pairedDeviceStore.macDeviceName },
-                        onReconnect = { SyncForegroundService.reconnectNow(applicationContext) },
-                        onForgetDevice = { SyncForegroundService.forgetPairedDevice(applicationContext) },
-                        onScanRequested = { requestCameraAndScan() },
-                        onStartService = { SyncForegroundService.start(applicationContext) }
-                    )
+                    var selectedTab by remember { mutableIntStateOf(0) }
+                    Column(modifier = Modifier.fillMaxSize()) {
+                        TabRow(selectedTabIndex = selectedTab) {
+                            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Device") })
+                            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Notes") })
+                            Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text("Settings") })
+                        }
+                        if (selectedTab == 0) {
+                            PairingScreen(
+                                isNotificationAccessGranted = { isNotificationAccessGranted() },
+                                onRequestNotificationAccess = { openNotificationAccessSettings() },
+                                isCallsAndMessagesAccessGranted = { isCallsAndMessagesAccessGranted() },
+                                onRequestCallsAndMessagesAccess = { requestCallsAndMessagesAccess() },
+                                isPhotoAccessGranted = { isPhotoAccessGranted() },
+                                onRequestPhotoAccess = { requestPhotoAccess() },
+                                isAccessibilityServiceEnabled = { isAccessibilityServiceEnabled() },
+                                onRequestAccessibilityAccess = { openAccessibilitySettings() },
+                                isFileAccessGranted = { isFileAccessGranted() },
+                                onRequestFileAccess = { requestFileAccess() },
+                                isPaired = { pairedDeviceStore.isPaired },
+                                pairedMacName = { pairedDeviceStore.macDeviceName },
+                                onReconnect = { SyncForegroundService.reconnectNow(applicationContext) },
+                                onForgetDevice = { SyncForegroundService.forgetPairedDevice(applicationContext) },
+                                onScanRequested = { requestCameraAndScan() },
+                                onStartService = { SyncForegroundService.start(applicationContext) }
+                            )
+                        } else if (selectedTab == 1) {
+                            NotesScreen(
+                                noteStore = noteStore,
+                                onChanged = { SyncForegroundService.notifyNotesChangedLocally(applicationContext) }
+                            )
+                        } else {
+                            SettingsScreen(
+                                isBatteryOptimizationIgnored = { isBatteryOptimizationIgnored() },
+                                onRequestIgnoreBatteryOptimization = { requestIgnoreBatteryOptimization() },
+                                clipboardSyncEnabled = { appSettingsStore.clipboardSyncEnabled },
+                                onClipboardSyncChanged = { appSettingsStore.clipboardSyncEnabled = it },
+                                appVersion = appVersionName(),
+                                deviceId = localDeviceId()
+                            )
+                        }
+                    }
                 }
             }
         }
@@ -233,6 +279,31 @@ class MainActivity : ComponentActivity() {
             )
         }
     }
+
+    /** Whether the OEM's battery management already leaves this app alone — not a runtime
+     *  permission, just a query against PowerManager's allowlist. */
+    private fun isBatteryOptimizationIgnored(): Boolean {
+        val powerManager = getSystemService(PowerManager::class.java)
+        return powerManager.isIgnoringBatteryOptimizations(packageName)
+    }
+
+    private fun requestIgnoreBatteryOptimization() {
+        startActivity(
+            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, Uri.parse("package:$packageName"))
+        )
+    }
+
+    private fun appVersionName(): String =
+        try {
+            packageManager.getPackageInfo(packageName, 0).versionName ?: "unknown"
+        } catch (e: PackageManager.NameNotFoundException) {
+            "unknown"
+        }
+
+    /** Same id/storage SyncForegroundService.localDeviceId() reads/generates — a second read of
+     *  the same SharedPreferences file is safe, same reasoning as pairedDeviceStore above. */
+    private fun localDeviceId(): String =
+        getSharedPreferences("linktomac_device", MODE_PRIVATE).getString("device_id", null) ?: "unassigned"
 
     // Android only allows reading clipboard content while the app is focused (or is the
     // default IME), so this is the only reliable place to pick up local copies — a background

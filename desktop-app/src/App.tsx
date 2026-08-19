@@ -1,31 +1,25 @@
 import { useEffect, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import { Sidebar } from "./components/Sidebar";
-import { ComingSoon } from "./components/ComingSoon";
 import { ThisDeviceView } from "./components/ThisDeviceView";
 import { NotificationsView } from "./components/NotificationsView";
 import { MessagesView } from "./components/MessagesView";
 import { ContactsView } from "./components/ContactsView";
 import { PhotosView } from "./components/PhotosView";
 import { FilesView } from "./components/FilesView";
-import { sectionMeta, type SectionId } from "./theme/sections";
+import { ScreenMirrorView } from "./components/ScreenMirrorView";
+import { NotesView } from "./components/NotesView";
+import { ClipboardView } from "./components/ClipboardView";
+import { SettingsView } from "./components/SettingsView";
+import { type SectionId } from "./theme/sections";
 import { initConnectionListeners } from "./store/connection";
 import { initNotificationListeners } from "./store/notifications";
-import { useNavigationStore } from "./store/navigation";
-
-type PlaceholderSectionId = Exclude<
-  SectionId,
-  "device" | "notifications" | "messages" | "contacts" | "photos" | "files"
->;
-
-const COMING_SOON_DETAIL: Record<PlaceholderSectionId, string> = {
-  mirroring: "See and control your phone's screen from your Mac.",
-  settings: "App settings aren't built yet — for now there's nothing to configure.",
-};
+import { useNavigationStore, clearPendingSection } from "./store/navigation";
 
 function App() {
   const [selection, setSelection] = useState<SectionId>("device");
   const pendingMessageAddress = useNavigationStore((s) => s.pendingMessageAddress);
+  const pendingSection = useNavigationStore((s) => s.pendingSection);
 
   useEffect(() => {
     initConnectionListeners();
@@ -37,6 +31,13 @@ function App() {
   useEffect(() => {
     if (pendingMessageAddress) setSelection("messages");
   }, [pendingMessageAddress]);
+
+  useEffect(() => {
+    if (pendingSection) {
+      setSelection(pendingSection);
+      clearPendingSection();
+    }
+  }, [pendingSection]);
 
   return (
     <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-neutral-950">
@@ -63,11 +64,14 @@ function App() {
               <PhotosView />
             ) : selection === "files" ? (
               <FilesView />
+            ) : selection === "mirroring" ? (
+              <ScreenMirrorView />
+            ) : selection === "notes" ? (
+              <NotesView />
+            ) : selection === "clipboard" ? (
+              <ClipboardView />
             ) : (
-              <ComingSoon
-                section={sectionMeta(selection)}
-                detail={COMING_SOON_DETAIL[selection as PlaceholderSectionId]}
-              />
+              <SettingsView />
             )}
           </motion.div>
         </AnimatePresence>

@@ -25,7 +25,9 @@ pub async fn posted(payload: NotificationPostedPayload, state: &std::sync::Arc<A
         count
     );
     let _ = state.app_handle.emit("notification-posted", payload.clone());
-    crate::notify::post(&state.app_handle, &payload);
+    if state.settings.lock().await.get().show_notification_banners {
+        crate::notify::post(&state.app_handle, &payload);
+    }
 }
 
 /// Mirrors `NotificationStore.remove` — also clears the delivered OS banner, matching

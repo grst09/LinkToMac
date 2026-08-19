@@ -11,12 +11,16 @@ use crate::protocol::envelope::{
     ContactDeleteResultPayload, ContactUpdateResultPayload, ContactsSyncPayload,
     DeviceStatusPayload, FilesCreateFolderResultPayload, FilesDeleteResultPayload,
     FilesDownloadResultPayload, FilesListResultPayload, FilesRenameResultPayload,
-    FilesTransferResultPayload, FilesUploadResultPayload, Message, NotificationPostedPayload,
+    FilesTransferResultPayload, FilesUploadResultPayload, Message, MirrorConfigPayload,
+    MirrorStoppedPayload, NoteCreateResultPayload, NoteDeleteResultPayload,
+    NoteUpdateResultPayload, NotesSyncPayload, NotificationPostedPayload,
     NotificationRemovedPayload, PhotoFullPayload, PhotoPagePayload, SmsSyncPayload,
 };
 
 pub mod contacts;
 pub mod files;
+pub mod mirror;
+pub mod notes;
 pub mod notifications;
 pub mod photos;
 
@@ -118,6 +122,30 @@ pub async fn handle(message: Message, state: &std::sync::Arc<AppState>) -> anyho
         "files.moveResult" => {
             let payload: FilesTransferResultPayload = serde_json::from_value(message.payload)?;
             files::move_result(payload, state).await;
+        }
+        "mirror.config" => {
+            let payload: MirrorConfigPayload = serde_json::from_value(message.payload)?;
+            mirror::config(payload, state).await;
+        }
+        "mirror.stopped" => {
+            let payload: MirrorStoppedPayload = serde_json::from_value(message.payload)?;
+            mirror::stopped(payload, state).await;
+        }
+        "notes.sync" => {
+            let payload: NotesSyncPayload = serde_json::from_value(message.payload)?;
+            notes::sync(payload, state).await;
+        }
+        "notes.createResult" => {
+            let payload: NoteCreateResultPayload = serde_json::from_value(message.payload)?;
+            notes::create_result(payload, state).await;
+        }
+        "notes.updateResult" => {
+            let payload: NoteUpdateResultPayload = serde_json::from_value(message.payload)?;
+            notes::update_result(payload, state).await;
+        }
+        "notes.deleteResult" => {
+            let payload: NoteDeleteResultPayload = serde_json::from_value(message.payload)?;
+            notes::delete_result(payload, state).await;
         }
         other => {
             tracing::info!("received {} (dispatch not yet implemented)", other);

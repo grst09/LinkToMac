@@ -1,0 +1,26 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <filter id="softShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="10" stdDeviation="14" flood-color="#000000" flood-opacity="0.4"/>
+    </filter>
+    <filter id="canvasShadow" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="20" stdDeviation="26" flood-color="#000000" flood-opacity="0.4"/>
+    </filter>
+  </defs>
+
+  <g transform="translate(100,100) scale(0.8047)">
+    <rect x="0" y="0" width="1024" height="1024" rx="228" fill="#0a0a0a" filter="url(#canvasShadow)"/>
+
+    <!-- laptop, white, set back -->
+    <g filter="url(#softShadow)">
+      <rect x="440" y="300" width="320" height="260" rx="28" fill="#ffffff"/>
+      <rect x="440" y="572" width="380" height="42" rx="18" fill="#ffffff"/>
+    </g>
+
+    <!-- phone, green, in front -->
+    <g filter="url(#softShadow)">
+      <rect x="300" y="380" width="220" height="400" rx="40" fill="#3DDC84"/>
+      <rect x="372" y="736" width="76" height="12" rx="6" fill="#0a0a0a"/>
+    </g>
+  </g>
+</svg>

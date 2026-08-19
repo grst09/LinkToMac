@@ -2,17 +2,25 @@
 //! the other direction (incoming protocol messages); this module is what the React side calls.
 //! Split by feature once the flat list got long enough to want it, mirroring `dispatch/`.
 
+mod clipboard;
 mod contacts;
 mod files;
 mod messages;
+mod mirror;
+mod notes;
 mod notifications;
 mod photos;
+mod settings;
 
+pub use clipboard::*;
 pub use contacts::*;
 pub use files::*;
 pub use messages::*;
+pub use mirror::*;
+pub use notes::*;
 pub use notifications::*;
 pub use photos::*;
+pub use settings::*;
 
 use std::sync::Arc;
 

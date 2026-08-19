@@ -42,4 +42,6 @@ anyhow = "1.0.104"
 if-addrs = "0.15.0"
 arboard = { version = "3.6.1", default-features = false }
 tauri-plugin-notification = "2.3.3"
+openh264 = "0.9.8"
+tauri-plugin-autostart = "2"
 

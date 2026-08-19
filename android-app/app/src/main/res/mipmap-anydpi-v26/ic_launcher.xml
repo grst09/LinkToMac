@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<adaptive-icon xmlns:android="http://schemas.android.com/apk/res/android">
+    <background android:drawable="@drawable/ic_launcher_background"/>
+    <foreground android:drawable="@mipmap/ic_launcher_foreground"/>
+    <!-- Android 13+ themed-icon support (API 33's <monochrome>) — only the alpha channel of
+         this drawable matters, the system supplies its own tint, so the colored foreground
+         works as-is without a dedicated asset. Without this, some One UI versions fail to
+         render the icon at all (a broken-image placeholder) rather than falling back
+         gracefully when the device has "Themed icons" enabled. -->
+    <monochrome android:drawable="@mipmap/ic_launcher_foreground"/>
+</adaptive-icon>

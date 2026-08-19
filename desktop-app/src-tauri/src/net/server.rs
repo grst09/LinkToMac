@@ -44,6 +44,7 @@ struct ActiveConnection {
 pub struct AppState {
     pub identity: IdentityStore,
     pub paired_devices: Mutex<PairedDeviceStore>,
+    pub settings: Mutex<crate::store::settings::SettingsStore>,
     /// Single pending pairing session at a time, matching the old app's behavior — see
     /// `beginNewPairingSession`/`activePairingToken` in `ConnectionServer.swift`.
     pub active_pairing_token: Mutex<Option<Vec<u8>>>,
@@ -60,11 +61,16 @@ pub struct AppState {
     /// just arrived from the other side. Matches `ClipboardSyncManager.swift`'s single
     /// `lastSyncedText` exactly (not separate sent/received trackers).
     pub clipboard_last_synced: Mutex<Option<String>>,
+    /// Newest-first, capped at 100 — every accepted copy from either device, for the Clipboard
+    /// section's history view. See `clipboard::record_history`.
+    pub clipboard_history: Mutex<Vec<crate::clipboard::ClipboardEntry>>,
     pub calls: Mutex<Vec<crate::protocol::envelope::CallLogEntry>>,
     pub messages: Mutex<crate::messages::MessageState>,
     pub contacts: Mutex<Vec<crate::protocol::envelope::ContactEntry>>,
+    pub notes: Mutex<Vec<crate::protocol::envelope::NoteEntry>>,
     pub photos: Mutex<crate::photos::PhotoState>,
     pub files: Mutex<crate::files::FileState>,
+    pub mirror: Mutex<crate::mirror::MirrorState>,
     pub app_handle: tauri::AppHandle,
     _mdns: ServiceDaemon,
 }
@@ -73,23 +79,28 @@ impl AppState {
     pub fn new(
         identity: IdentityStore,
         paired_devices: PairedDeviceStore,
+        settings: crate::store::settings::SettingsStore,
         app_handle: tauri::AppHandle,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mdns = start_mdns(&identity)?;
         Ok(Self {
             identity,
             paired_devices: Mutex::new(paired_devices),
+            settings: Mutex::new(settings),
             active_pairing_token: Mutex::new(None),
             active_device_id: Mutex::new(None),
             active_connection: Mutex::new(None),
             notifications: Mutex::new(Vec::new()),
             device_status: Mutex::new(None),
             clipboard_last_synced: Mutex::new(None),
+            clipboard_history: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
             messages: Mutex::new(crate::messages::MessageState::default()),
             contacts: Mutex::new(Vec::new()),
+            notes: Mutex::new(Vec::new()),
             photos: Mutex::new(crate::photos::PhotoState::default()),
             files: Mutex::new(crate::files::FileState::default()),
+            mirror: Mutex::new(crate::mirror::MirrorState::default()),
             app_handle,
             _mdns: mdns,
         })
@@ -389,7 +400,7 @@ async fn handle_connection(
                     WsMessage::Binary(data) => {
                         match secure_channel::open_raw(&data, &result.session_key) {
                             Ok(plaintext) => {
-                                tracing::debug!("received {} bytes of binary (mirror) data", plaintext.len());
+                                state.mirror.lock().await.submit_frame(plaintext);
                             }
                             Err(e) => tracing::warn!("failed to decrypt binary frame: {}", e),
                         }

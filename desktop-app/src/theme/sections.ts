@@ -6,6 +6,8 @@ import {
   Users,
   MonitorSmartphone,
   Smartphone,
+  StickyNote,
+  Clipboard,
   Settings as SettingsIcon,
   type LucideIcon,
 } from "lucide-react";
@@ -16,6 +18,8 @@ export type SectionId =
   | "photos"
   | "files"
   | "contacts"
+  | "notes"
+  | "clipboard"
   | "mirroring"
   | "device"
   | "settings";
@@ -68,6 +72,16 @@ const ACCENTS = {
     bg: "bg-slate-500/10 dark:bg-slate-400/10",
     ring: "ring-slate-500/20",
   },
+  amber: {
+    text: "text-amber-500 dark:text-amber-400",
+    bg: "bg-amber-500/10 dark:bg-amber-400/10",
+    ring: "ring-amber-500/20",
+  },
+  cyan: {
+    text: "text-cyan-500 dark:text-cyan-400",
+    bg: "bg-cyan-500/10 dark:bg-cyan-400/10",
+    ring: "ring-cyan-500/20",
+  },
 } as const;
 
 export const SECTIONS: SectionMeta[] = [
@@ -76,6 +90,8 @@ export const SECTIONS: SectionMeta[] = [
   { id: "photos", label: "Photos", icon: Image, accent: ACCENTS.purple },
   { id: "files", label: "Files", icon: Folder, accent: ACCENTS.blue },
   { id: "contacts", label: "Contacts", icon: Users, accent: ACCENTS.purple },
+  { id: "notes", label: "Notes", icon: StickyNote, accent: ACCENTS.amber },
+  { id: "clipboard", label: "Clipboard", icon: Clipboard, accent: ACCENTS.cyan },
   { id: "mirroring", label: "Screen Mirroring", icon: MonitorSmartphone, accent: ACCENTS.teal },
   { id: "device", label: "This Device", icon: Smartphone, accent: ACCENTS.emerald },
 ];

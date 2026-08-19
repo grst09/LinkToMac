@@ -27,6 +27,8 @@ import com.linktomac.net.MacConnection
 import com.linktomac.net.MacDiscovery
 import com.linktomac.net.NotificationPostedPayload
 import com.linktomac.net.PairingQrPayload
+import com.linktomac.storage.AppSettingsStore
+import com.linktomac.storage.NoteStore
 import com.linktomac.storage.PairedDeviceStore
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +60,8 @@ class SyncForegroundService : Service() {
     private lateinit var photoRepository: PhotoRepository
     private lateinit var batteryStatusRepository: BatteryStatusRepository
     private lateinit var fileRepository: FileRepository
+    private lateinit var noteStore: NoteStore
+    private lateinit var appSettingsStore: AppSettingsStore
     private var discoveryJob: Job? = null
     private var syncJob: Job? = null
     private var contactSyncJob: Job? = null
@@ -78,6 +82,8 @@ class SyncForegroundService : Service() {
         photoRepository = PhotoRepository(applicationContext)
         batteryStatusRepository = BatteryStatusRepository(applicationContext)
         fileRepository = FileRepository()
+        noteStore = NoteStore(applicationContext)
+        appSettingsStore = AppSettingsStore(applicationContext)
         connection = MacConnection(
             deviceId = localDeviceId(),
             deviceName = Build.MODEL,
@@ -224,11 +230,37 @@ class SyncForegroundService : Service() {
         connection.onMessagesRefreshRequested = {
             scope.launch(Dispatchers.IO) { connection.sendSmsSync(smsRepository.readThreads()) }
         }
+        connection.onNotesRefreshRequested = {
+            scope.launch(Dispatchers.IO) { connection.sendNotesSync(noteStore.readAll()) }
+        }
+        connection.onNoteCreateRequested = { payload ->
+            scope.launch(Dispatchers.IO) {
+                val note = noteStore.create(payload.title, payload.body)
+                connection.sendNoteCreateResult(true)
+                connection.sendNotesSync(noteStore.readAll())
+                android.util.Log.d("SyncForegroundService", "notes.create: ${note.id}")
+            }
+        }
+        connection.onNoteUpdateRequested = { payload ->
+            scope.launch(Dispatchers.IO) {
+                val success = noteStore.update(payload.id, payload.title, payload.body)
+                connection.sendNoteUpdateResult(payload.id, success, if (success) null else "Couldn't find that note")
+                if (success) connection.sendNotesSync(noteStore.readAll())
+            }
+        }
+        connection.onNoteDeleteRequested = { id ->
+            scope.launch(Dispatchers.IO) {
+                val success = noteStore.delete(id)
+                connection.sendNoteDeleteResult(id, success, if (success) null else "Couldn't find that note")
+                if (success) connection.sendNotesSync(noteStore.readAll())
+            }
+        }
         connection.state.onEach { state ->
             updateNotification(state)
             if (state is ConnectionState.Connected) {
                 syncCallsAndSms()
                 connection.sendContactsSync(contactRepository.readAll())
+                connection.sendNotesSync(noteStore.readAll())
                 batteryStatusRepository.readCurrent()?.let { connection.sendDeviceStatus(it) }
             }
         }.launchIn(scope)
@@ -264,6 +296,7 @@ class SyncForegroundService : Service() {
                 connection.sendContactsSync(contactRepository.readAll())
             }
             ACTION_REFRESH_PHOTOS -> photoRepository.observe { schedulePhotoLibraryChangedNotification() }
+            ACTION_NOTES_CHANGED -> connection.sendNotesSync(noteStore.readAll())
             ACTION_RECONNECT -> if (pairedDeviceStore.isPaired) startDiscovery()
             ACTION_FORGET -> {
                 discoveryJob?.cancel()
@@ -296,6 +329,7 @@ class SyncForegroundService : Service() {
      *  runs the moment a `clipboard.update` arrives, no foreground Activity required. The item
      *  then shows up via the normal long-press "Paste" option in any text field. */
     private fun applyRemoteClipboard(text: String) {
+        if (!appSettingsStore.clipboardSyncEnabled) return
         if (text == lastSyncedClipboardText) return
         lastSyncedClipboardText = text
         val clipboardManager = getSystemService(ClipboardManager::class.java)
@@ -414,6 +448,7 @@ class SyncForegroundService : Service() {
         private const val ACTION_NOTIFICATION_REMOVED = "com.linktomac.action.NOTIFICATION_REMOVED"
         private const val ACTION_REFRESH_DATA = "com.linktomac.action.REFRESH_DATA"
         private const val ACTION_REFRESH_PHOTOS = "com.linktomac.action.REFRESH_PHOTOS"
+        private const val ACTION_NOTES_CHANGED = "com.linktomac.action.NOTES_CHANGED"
         private const val ACTION_RECONNECT = "com.linktomac.action.RECONNECT"
         private const val ACTION_FORGET = "com.linktomac.action.FORGET"
         private const val EXTRA_QR_PAYLOAD = "qr_payload"
@@ -476,12 +511,25 @@ class SyncForegroundService : Service() {
             context.startForegroundService(intent)
         }
 
+        /** Notes has no ContentObserver to react to (it's not a system provider — see
+         *  docs/PROTOCOL.md's Phase 8 notes), so [NotesScreen] calls this itself right after
+         *  every local create/update/delete to push a fresh `notes.sync`, the same way a
+         *  Mac-initiated mutation does via [SyncForegroundService]'s own `onNoteCreateRequested`
+         *  etc. */
+        fun notifyNotesChangedLocally(context: Context) {
+            val intent = Intent(context, SyncForegroundService::class.java).apply {
+                action = ACTION_NOTES_CHANGED
+            }
+            context.startForegroundService(intent)
+        }
+
         /** Reading the clipboard is only reliable while the app is focused (Android 10+ blocks
          *  background reads for anything but the default IME) — see MainActivity's
          *  OnPrimaryClipChangedListener, registered only across onResume/onPause. Same
          *  loop-prevention check as [applyRemoteClipboard], against the same service instance. */
         fun reportLocalClipboardText(text: String) {
             instance?.let { svc ->
+                if (!svc.appSettingsStore.clipboardSyncEnabled) return
                 if (text.isNotBlank() && text != svc.lastSyncedClipboardText) {
                     svc.lastSyncedClipboardText = text
                     svc.connection.sendClipboardUpdate(text)

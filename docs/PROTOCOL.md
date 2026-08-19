@@ -217,4 +217,27 @@ Android restricts writes to the shared `content://sms` database — insert, upda
 
 Plain SMS conversations (not upgraded to RCS) work normally in both directions once a thread already exists.
 
+## Message types (Phase 8)
+
+Notes. Unlike every other feature, there's no Android system provider backing this one — no public API exists for Samsung Notes or Google Keep (Samsung's format is private/undocumented, Google has never shipped a Keep API), so notes are LinkToMac's own data, stored by the Android app itself and never touching either of those apps. This also makes Notes genuinely bidirectional in a way Contacts isn't: Contacts syncs *from* `ContactsContract` (the phone is the source of truth, the Mac just edits through to it), but a note can originate on either side — created in the Android app's own Notes screen, or created from the Mac — so both directions need to push a fresh sync after a local change, not just the Mac-initiated one.
+
+| type | direction | payload |
+|---|---|---|
+| `notes.sync` | Android → Mac | `{notes: [NoteEntry]}` — sent once after `helloAck`, and again after *any* local mutation, whether it originated on the phone (its own Notes screen) or arrived from the Mac as `notes.create`/`update`/`delete` |
+| `notes.refresh` | Mac → Android | `{}` — forces an immediate re-push, for the Mac's manual Sync button |
+| `notes.create` | Mac → Android | `{title, body}` |
+| `notes.createResult` | Android → Mac | `{success, error?}` |
+| `notes.update` | Mac → Android | `{id, title, body}` |
+| `notes.updateResult` | Android → Mac | `{id, success, error?}` |
+| `notes.delete` | Mac → Android | `{id}` |
+| `notes.deleteResult` | Android → Mac | `{id, success, error?}` |
+
+```
+NoteEntry = {id, title, body, createdAt, updatedAt}
+  id: a UUID generated locally on creation (by whichever side created it)
+  createdAt, updatedAt: epoch milliseconds
+```
+
+Storage is a single JSON-encoded list in `EncryptedSharedPreferences` (`NoteStore`, mirroring `PairedDeviceStore`'s persistence style) — no chunking/pagination, no expectation of the scale Photos/Files need. Like Contacts, mutation results only ever surface a failure to the UI; a successful create/update/delete is reflected by the `notes.sync` that immediately follows it, not applied optimistically from the result payload alone.
+
 Future phases: none currently planned.

@@ -456,3 +456,62 @@ pub struct FilesTransferResultPayload {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
 }
+
+// MARK: - Notes (Phase 8)
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteEntry {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+    pub created_at: f64,
+    pub updated_at: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotesSyncPayload {
+    pub notes: Vec<NoteEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteCreatePayload {
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteCreateResultPayload {
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteUpdatePayload {
+    pub id: String,
+    pub title: String,
+    pub body: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteUpdateResultPayload {
+    pub id: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteDeletePayload {
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteDeleteResultPayload {
+    pub id: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
