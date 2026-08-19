@@ -16,18 +16,33 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.layout.Column
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.Text
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.Scaffold
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.core.view.WindowCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.linktomac.service.InputInjectionAccessibilityService
 import com.linktomac.service.ScreenMirrorService
@@ -39,6 +54,9 @@ import com.linktomac.ui.NotesScreen
 import com.linktomac.ui.PairingScreen
 import com.linktomac.ui.SettingsScreen
 import com.linktomac.ui.qrScanOptions
+import com.linktomac.ui.theme.LinkToMacTheme
+import com.linktomac.ui.theme.ThemeMode
+import com.linktomac.ui.theme.resolveDarkTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -111,17 +129,67 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
 
         setContent {
-            MaterialTheme {
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    var selectedTab by remember { mutableIntStateOf(0) }
-                    Column(modifier = Modifier.fillMaxSize()) {
-                        TabRow(selectedTabIndex = selectedTab) {
-                            Tab(selected = selectedTab == 0, onClick = { selectedTab = 0 }, text = { Text("Device") })
-                            Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 }, text = { Text("Notes") })
-                            Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 }, text = { Text("Settings") })
+            var themeMode by remember { mutableStateOf(ThemeMode.valueOf(appSettingsStore.themeMode)) }
+            val darkTheme = resolveDarkTheme(themeMode)
+            // Manifest theme is fixed (Theme.Material.Light.NoActionBar, API 26-safe), so the
+            // system status/nav bar icon contrast is set here instead, following the same
+            // darkTheme flag LinkToMacTheme uses for the Compose content.
+            SideEffect {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !darkTheme
+                    isAppearanceLightNavigationBars = !darkTheme
+                }
+            }
+            LinkToMacTheme(darkTheme = darkTheme) {
+                var selectedTab by remember { mutableIntStateOf(0) }
+                Scaffold(
+                    bottomBar = {
+                        NavigationBar {
+                            NavigationBarItem(
+                                selected = selectedTab == 0,
+                                onClick = { selectedTab = 0 },
+                                icon = { Icon(Icons.Filled.Smartphone, contentDescription = "Device") },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                            NavigationBarItem(
+                                selected = selectedTab == 1,
+                                onClick = { selectedTab = 1 },
+                                icon = { Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = "Notes") },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
+                            NavigationBarItem(
+                                selected = selectedTab == 2,
+                                onClick = { selectedTab = 2 },
+                                icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
+                                colors = NavigationBarItemDefaults.colors(
+                                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            )
                         }
-                        if (selectedTab == 0) {
-                            PairingScreen(
+                    }
+                ) { innerPadding ->
+                    AnimatedContent(
+                        targetState = selectedTab,
+                        modifier = Modifier.fillMaxSize().padding(innerPadding),
+                        transitionSpec = {
+                            val direction = if (targetState > initialState) 1 else -1
+                            (fadeIn(tween(220)) + slideInHorizontally(tween(220)) { direction * it / 6 })
+                                .togetherWith(fadeOut(tween(140)) + slideOutHorizontally(tween(140)) { -direction * it / 6 })
+                        },
+                        label = "tabContent"
+                    ) { tab ->
+                        when (tab) {
+                            0 -> PairingScreen(
                                 isNotificationAccessGranted = { isNotificationAccessGranted() },
                                 onRequestNotificationAccess = { openNotificationAccessSettings() },
                                 isCallsAndMessagesAccessGranted = { isCallsAndMessagesAccessGranted() },
@@ -135,21 +203,28 @@ class MainActivity : ComponentActivity() {
                                 isPaired = { pairedDeviceStore.isPaired },
                                 pairedMacName = { pairedDeviceStore.macDeviceName },
                                 onReconnect = { SyncForegroundService.reconnectNow(applicationContext) },
+                                onDisconnect = { SyncForegroundService.disconnect(applicationContext) },
                                 onForgetDevice = { SyncForegroundService.forgetPairedDevice(applicationContext) },
                                 onScanRequested = { requestCameraAndScan() },
-                                onStartService = { SyncForegroundService.start(applicationContext) }
+                                onStartService = { SyncForegroundService.start(applicationContext) },
+                                onNavigateToNotes = { selectedTab = 1 },
+                                onNavigateToSettings = { selectedTab = 2 },
+                                darkTheme = darkTheme
                             )
-                        } else if (selectedTab == 1) {
-                            NotesScreen(
+                            1 -> NotesScreen(
                                 noteStore = noteStore,
                                 onChanged = { SyncForegroundService.notifyNotesChangedLocally(applicationContext) }
                             )
-                        } else {
-                            SettingsScreen(
+                            else -> SettingsScreen(
                                 isBatteryOptimizationIgnored = { isBatteryOptimizationIgnored() },
                                 onRequestIgnoreBatteryOptimization = { requestIgnoreBatteryOptimization() },
                                 clipboardSyncEnabled = { appSettingsStore.clipboardSyncEnabled },
                                 onClipboardSyncChanged = { appSettingsStore.clipboardSyncEnabled = it },
+                                themeMode = themeMode,
+                                onThemeModeChanged = {
+                                    themeMode = it
+                                    appSettingsStore.themeMode = it.name
+                                },
                                 appVersion = appVersionName(),
                                 deviceId = localDeviceId()
                             )

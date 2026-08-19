@@ -30,7 +30,14 @@ class AppSettingsStore(context: Context) {
         get() = prefs.getBoolean(KEY_CLIPBOARD_SYNC_ENABLED, true)
         set(value) = prefs.edit().putBoolean(KEY_CLIPBOARD_SYNC_ENABLED, value).apply()
 
+    /** Raw values are `ThemeMode` enum names ("SYSTEM"/"LIGHT"/"DARK") — kept as a plain String
+     *  here rather than importing the UI-layer enum into storage. */
+    var themeMode: String
+        get() = prefs.getString(KEY_THEME_MODE, "SYSTEM") ?: "SYSTEM"
+        set(value) = prefs.edit().putString(KEY_THEME_MODE, value).apply()
+
     private companion object {
         const val KEY_CLIPBOARD_SYNC_ENABLED = "clipboard_sync_enabled"
+        const val KEY_THEME_MODE = "theme_mode"
     }
 }

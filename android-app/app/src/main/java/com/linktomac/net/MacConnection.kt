@@ -146,12 +146,20 @@ class MacConnection(
 
         override fun onMessage(webSocket: WebSocket, text: String) = handleIncoming(text)
 
+        // Both callbacks can arrive asynchronously after this connection has already been
+        // superseded — by an intentional close() (which nulls out `webSocket` synchronously
+        // before the graceful-close handshake actually completes) or by a fresh connect() call
+        // replacing it outright. Comparing against the currently-held `webSocket` discards those
+        // stale callbacks instead of letting them clobber newer state, e.g. turning a deliberate
+        // disconnect into a spuriously displayed "connection failed" error.
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+            if (this@MacConnection.webSocket !== webSocket) return
             Log.e("MacConnection", "WebSocket failure", t)
             _state.value = ConnectionState.Failed(t.message ?: "connection failed")
         }
 
         override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+            if (this@MacConnection.webSocket !== webSocket) return
             _state.value = ConnectionState.Idle
         }
     }

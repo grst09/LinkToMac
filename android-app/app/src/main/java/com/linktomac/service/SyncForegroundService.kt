@@ -14,6 +14,7 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Base64
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
 import com.linktomac.MainActivity
 import com.linktomac.data.BatteryStatusRepository
 import com.linktomac.data.CallLogRepository
@@ -71,6 +72,12 @@ class SyncForegroundService : Service() {
      *  system clipboard doesn't get read back and echoed to the Mac as if it were a new local
      *  copy — see [applyRemoteClipboard] and [reportLocalClipboardText]. */
     private var lastSyncedClipboardText: String? = null
+
+    /** Set by the explicit "Disconnect" action (distinct from [ACTION_FORGET] — the pairing
+     *  itself is kept) so the persistent sync notification stays hidden until the user
+     *  reconnects, instead of [connection]'s state settling back to Idle and immediately
+     *  reposting a "Waiting to pair" notification via the [ConnectionState] listener below. */
+    private var manuallyDisconnected = false
 
     override fun onCreate() {
         super.onCreate()
@@ -256,7 +263,7 @@ class SyncForegroundService : Service() {
             }
         }
         connection.state.onEach { state ->
-            updateNotification(state)
+            if (!manuallyDisconnected) updateNotification(state)
             if (state is ConnectionState.Connected) {
                 syncCallsAndSms()
                 connection.sendContactsSync(contactRepository.readAll())
@@ -297,11 +304,27 @@ class SyncForegroundService : Service() {
             }
             ACTION_REFRESH_PHOTOS -> photoRepository.observe { schedulePhotoLibraryChangedNotification() }
             ACTION_NOTES_CHANGED -> connection.sendNotesSync(noteStore.readAll())
-            ACTION_RECONNECT -> if (pairedDeviceStore.isPaired) startDiscovery()
+            ACTION_RECONNECT -> if (pairedDeviceStore.isPaired) {
+                manuallyDisconnected = false
+                startForeground(NOTIFICATION_ID, buildNotification(connection.state.value))
+                startDiscovery()
+            }
+            ACTION_DISCONNECT -> {
+                // Set before close() — close() flips connection.state to Idle, which the
+                // StateFlow collector above picks up asynchronously on a background dispatcher.
+                // Setting the guard first (rather than after) avoids a race where that collector
+                // reads manuallyDisconnected as still false and reposts the notification before
+                // stopForeground below ever runs.
+                manuallyDisconnected = true
+                discoveryJob?.cancel()
+                connection.close()
+                ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+            }
             ACTION_FORGET -> {
                 discoveryJob?.cancel()
                 connection.close()
                 pairedDeviceStore.clear()
+                manuallyDisconnected = false
             }
         }
         return START_STICKY
@@ -376,6 +399,8 @@ class SyncForegroundService : Service() {
     }
 
     private fun pairWithQrPayload(qrJson: String) {
+        manuallyDisconnected = false
+        startForeground(NOTIFICATION_ID, buildNotification(connection.state.value))
         val payload = json.decodeFromString(PairingQrPayload.serializer(), qrJson)
         connection.connectForPairing(payload)
     }
@@ -450,6 +475,7 @@ class SyncForegroundService : Service() {
         private const val ACTION_REFRESH_PHOTOS = "com.linktomac.action.REFRESH_PHOTOS"
         private const val ACTION_NOTES_CHANGED = "com.linktomac.action.NOTES_CHANGED"
         private const val ACTION_RECONNECT = "com.linktomac.action.RECONNECT"
+        private const val ACTION_DISCONNECT = "com.linktomac.action.DISCONNECT"
         private const val ACTION_FORGET = "com.linktomac.action.FORGET"
         private const val EXTRA_QR_PAYLOAD = "qr_payload"
         private const val EXTRA_NOTIFICATION_JSON = "notification_json"
@@ -543,6 +569,15 @@ class SyncForegroundService : Service() {
         fun reconnectNow(context: Context) {
             val intent = Intent(context, SyncForegroundService::class.java).apply {
                 action = ACTION_RECONNECT
+            }
+            context.startForegroundService(intent)
+        }
+
+        /** Closes the current connection and stops the persistent sync notification, without
+         *  clearing the stored pairing — [reconnectNow] (or a fresh pair) brings both back. */
+        fun disconnect(context: Context) {
+            val intent = Intent(context, SyncForegroundService::class.java).apply {
+                action = ACTION_DISCONNECT
             }
             context.startForegroundService(intent)
         }
