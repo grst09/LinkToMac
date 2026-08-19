@@ -11,8 +11,20 @@ export interface Contact {
   organization?: string | null;
 }
 
+/** A contact created on the Mac while Contacts sync was off (see `store/local_contacts.rs` on
+ *  the Rust side) — id always starts with `"local-"`. Pushed to the phone as a brand-new contact
+ *  once sync is re-enabled. */
+export interface PendingContact {
+  id: string;
+  name: string;
+  phoneNumber: string;
+  email?: string | null;
+  organization?: string | null;
+}
+
 interface ContactsState {
   contacts: Contact[];
+  pending: PendingContact[];
   loaded: boolean;
   lastSyncedAt: number | null;
   lastError: string | null;
@@ -20,10 +32,15 @@ interface ContactsState {
 
 export const useContactsStore = create<ContactsState>(() => ({
   contacts: [],
+  pending: [],
   loaded: false,
   lastSyncedAt: null,
   lastError: null,
 }));
+
+export function isPendingContact(id: string): boolean {
+  return id.startsWith("local-");
+}
 
 /** Matches on the last 10 digits (or however many are shorter) — country-code/formatting
  *  differences between how Android reports a thread's address and a contact's stored number
@@ -86,8 +103,16 @@ export function initContactsListeners() {
     useContactsStore.setState({ contacts, loaded: true, lastSyncedAt: Date.now() });
   });
 
+  invoke<PendingContact[]>("list_local_contacts").then((pending) => {
+    useContactsStore.setState({ pending });
+  });
+
   listen<Contact[]>("contacts-updated", (event) => {
     useContactsStore.setState({ contacts: event.payload, loaded: true, lastSyncedAt: Date.now() });
+  });
+
+  listen<PendingContact[]>("local-contacts-updated", (event) => {
+    useContactsStore.setState({ pending: event.payload });
   });
 
   listen<string>("contacts-error", (event) => {

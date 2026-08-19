@@ -12,10 +12,11 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -32,25 +33,30 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.ContentPaste
+import androidx.compose.material.icons.filled.Contacts
 import androidx.compose.material.icons.filled.Laptop
-import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ColorScheme
-import androidx.compose.material3.DropdownMenu
-import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -64,20 +70,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.linktomac.net.ConnectionState
 import com.linktomac.service.SyncForegroundService
-import com.linktomac.ui.theme.AccentBlue
-import com.linktomac.ui.theme.AccentBlueContainerDark
-import com.linktomac.ui.theme.AccentBlueContainerLight
-import com.linktomac.ui.theme.AccentViolet
-import com.linktomac.ui.theme.AccentVioletContainerDark
-import com.linktomac.ui.theme.AccentVioletContainerLight
-import com.linktomac.ui.theme.LinkGreen
-import com.linktomac.ui.theme.LinkGreenContainerDark
-import com.linktomac.ui.theme.LinkGreenContainerLight
+import com.linktomac.storage.SyncCategory
 import kotlinx.coroutines.delay
 
 @Composable
@@ -99,9 +98,8 @@ fun PairingScreen(
     onForgetDevice: () -> Unit,
     onScanRequested: () -> Unit,
     onStartService: () -> Unit,
-    onNavigateToNotes: () -> Unit,
-    onNavigateToSettings: () -> Unit,
-    darkTheme: Boolean
+    syncOptions: () -> Map<SyncCategory, Boolean>,
+    onSyncOptionChanged: (SyncCategory, Boolean) -> Unit
 ) {
     var notificationAccessGranted by remember { mutableStateOf(isNotificationAccessGranted()) }
     var callsAndMessagesAccessGranted by remember { mutableStateOf(isCallsAndMessagesAccessGranted()) }
@@ -111,7 +109,7 @@ fun PairingScreen(
     var paired by remember { mutableStateOf(isPaired()) }
     var macName by remember { mutableStateOf(pairedMacName()) }
     var connectionState by remember { mutableStateOf<ConnectionState>(ConnectionState.Idle) }
-    var menuExpanded by remember { mutableStateOf(false) }
+    var showSyncOptions by remember { mutableStateOf(false) }
 
     LaunchedEffect(Unit) {
         onStartService()
@@ -140,212 +138,190 @@ fun PairingScreen(
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .verticalScroll(rememberScrollState())
-            .padding(horizontal = 20.dp, vertical = 16.dp)
-    ) {
-        HeroCard(
-            paired = paired,
-            connectionState = connectionState,
-            darkTheme = darkTheme,
-            onPrimaryAction = if (paired) onReconnect else onScanRequested,
-            onNavigateToNotes = onNavigateToNotes,
-            onNavigateToSettings = onNavigateToSettings
-        )
-
-        Spacer(Modifier.height(24.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(Icons.Filled.Laptop, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.width(8.dp))
-            Text("Paired Device", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-            Box(
-                modifier = Modifier
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer)
-                    .padding(horizontal = 10.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    if (paired) "1" else "0",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onPrimaryContainer
-                )
+    AnimatedContent(
+        targetState = showSyncOptions,
+        label = "deviceScreen",
+        transitionSpec = {
+            if (targetState) {
+                (slideInHorizontally(tween(220)) { it } + fadeIn(tween(220)))
+                    .togetherWith(fadeOut(tween(140)))
+            } else {
+                fadeIn(tween(220))
+                    .togetherWith(slideOutHorizontally(tween(220)) { it } + fadeOut(tween(140)))
             }
         }
-        Spacer(Modifier.height(12.dp))
-
-        if (paired) {
-            PairedDeviceRow(
+    ) { optionsVisible ->
+        if (optionsVisible) {
+            DeviceSyncOptionsView(
                 macName = macName ?: "Paired Mac",
-                connectionState = connectionState,
-                menuExpanded = menuExpanded,
-                onMenuExpandedChange = { menuExpanded = it },
-                onReconnect = { menuExpanded = false; onReconnect() },
-                onDisconnect = { menuExpanded = false; onDisconnect() },
-                onForget = {
-                    menuExpanded = false
-                    paired = false
-                    onForgetDevice()
-                }
+                initialOptions = syncOptions(),
+                onToggle = onSyncOptionChanged,
+                onBack = { showSyncOptions = false }
             )
         } else {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(
-                        "No Mac paired yet. Tap Pair above to scan a QR code from your Mac.",
-                        style = MaterialTheme.typography.bodyMedium
-                    )
-                    if (connectionState is ConnectionState.Failed) {
-                        Spacer(Modifier.height(8.dp))
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 20.dp, vertical = 16.dp)
+            ) {
+                HeroCard(paired = paired, connectionState = connectionState)
+
+                Spacer(Modifier.height(24.dp))
+
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Filled.Laptop, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.width(8.dp))
+                    Text("Paired Device", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                    Box(
+                        modifier = Modifier
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer)
+                            .padding(horizontal = 10.dp, vertical = 4.dp)
+                    ) {
                         Text(
-                            "Couldn't pair: ${(connectionState as ConnectionState.Failed).message}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error
+                            if (paired) "1" else "0",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
                         )
-                        Spacer(Modifier.height(12.dp))
-                        OutlinedButton(onClick = onScanRequested) { Text("Try Again") }
-                    } else if (connectionState is ConnectionState.Connecting) {
-                        Spacer(Modifier.height(12.dp))
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("Connecting…", style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+
+                if (paired) {
+                    PairedDeviceRow(
+                        macName = macName ?: "Paired Mac",
+                        connectionState = connectionState,
+                        onReconnect = onReconnect,
+                        onDisconnect = onDisconnect,
+                        onForget = {
+                            paired = false
+                            onForgetDevice()
+                        },
+                        onOpenSyncOptions = { showSyncOptions = true }
+                    )
+                } else {
+                    Card(modifier = Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(16.dp)) {
+                            Text(
+                                "No Mac paired yet. Scan a QR code from your Mac to get started.",
+                                style = MaterialTheme.typography.bodyMedium
+                            )
+                            if (connectionState is ConnectionState.Failed) {
+                                Spacer(Modifier.height(8.dp))
+                                Text(
+                                    "Couldn't pair: ${(connectionState as ConnectionState.Failed).message}",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error
+                                )
+                            } else if (connectionState is ConnectionState.Connecting) {
+                                Spacer(Modifier.height(8.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("Connecting…", style = MaterialTheme.typography.bodySmall)
+                                }
+                            }
+                            Spacer(Modifier.height(12.dp))
+                            Button(onClick = onScanRequested) {
+                                Icon(Icons.Filled.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                                Spacer(Modifier.width(8.dp))
+                                Text("Scan Pairing Code")
+                            }
                         }
                     }
                 }
+
+                val anyPermissionMissing = !notificationAccessGranted || !callsAndMessagesAccessGranted ||
+                    !photoAccessGranted || !accessibilityServiceEnabled || !fileAccessGranted
+
+                AnimatedVisibility(visible = anyPermissionMissing) {
+                    Column {
+                        Spacer(Modifier.height(24.dp))
+                        Text("Setup", style = MaterialTheme.typography.titleMedium)
+                        Spacer(Modifier.height(12.dp))
+                    }
+                }
+
+                Column(modifier = Modifier.animateContentSize()) {
+                    PermissionCard(
+                        visible = !notificationAccessGranted,
+                        title = "Notification access needed",
+                        description = "LinkToMac needs permission to read notifications so it can mirror them to your Mac.",
+                        actionLabel = "Open Settings",
+                        onAction = onRequestNotificationAccess
+                    )
+                    PermissionCard(
+                        visible = !callsAndMessagesAccessGranted,
+                        title = "Call & message access needed",
+                        description = "LinkToMac needs permission to read your call log and messages so it can show them on your Mac, and to send texts on your behalf when you reply from there.",
+                        actionLabel = "Grant Access",
+                        onAction = onRequestCallsAndMessagesAccess
+                    )
+                    PermissionCard(
+                        visible = !photoAccessGranted,
+                        title = "Photo access needed",
+                        description = "LinkToMac needs permission to read your photos so you can browse them from your Mac.",
+                        actionLabel = "Grant Access",
+                        onAction = onRequestPhotoAccess
+                    )
+                    PermissionCard(
+                        visible = !accessibilityServiceEnabled,
+                        title = "Screen mirroring access needed",
+                        description = "To tap, swipe, and type on your phone from your Mac during screen mirroring, LinkToMac needs Accessibility access. Find LinkToMac in the list and turn it on.",
+                        actionLabel = "Open Settings",
+                        onAction = onRequestAccessibilityAccess
+                    )
+                    PermissionCard(
+                        visible = !fileAccessGranted,
+                        title = "File access needed",
+                        description = "LinkToMac needs access to your phone's storage so you can browse and transfer files from your Mac.",
+                        actionLabel = "Grant Access",
+                        onAction = onRequestFileAccess
+                    )
+                }
+                Spacer(Modifier.height(8.dp))
             }
         }
-
-        val anyPermissionMissing = !notificationAccessGranted || !callsAndMessagesAccessGranted ||
-            !photoAccessGranted || !accessibilityServiceEnabled || !fileAccessGranted
-
-        AnimatedVisibility(visible = anyPermissionMissing) {
-            Column {
-                Spacer(Modifier.height(24.dp))
-                Text("Setup", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(12.dp))
-            }
-        }
-
-        Column(modifier = Modifier.animateContentSize()) {
-            PermissionCard(
-                visible = !notificationAccessGranted,
-                title = "Notification access needed",
-                description = "LinkToMac needs permission to read notifications so it can mirror them to your Mac.",
-                actionLabel = "Open Settings",
-                onAction = onRequestNotificationAccess
-            )
-            PermissionCard(
-                visible = !callsAndMessagesAccessGranted,
-                title = "Call & message access needed",
-                description = "LinkToMac needs permission to read your call log and messages so it can show them on your Mac, and to send texts on your behalf when you reply from there.",
-                actionLabel = "Grant Access",
-                onAction = onRequestCallsAndMessagesAccess
-            )
-            PermissionCard(
-                visible = !photoAccessGranted,
-                title = "Photo access needed",
-                description = "LinkToMac needs permission to read your photos so you can browse them from your Mac.",
-                actionLabel = "Grant Access",
-                onAction = onRequestPhotoAccess
-            )
-            PermissionCard(
-                visible = !accessibilityServiceEnabled,
-                title = "Screen mirroring access needed",
-                description = "To tap, swipe, and type on your phone from your Mac during screen mirroring, LinkToMac needs Accessibility access. Find LinkToMac in the list and turn it on.",
-                actionLabel = "Open Settings",
-                onAction = onRequestAccessibilityAccess
-            )
-            PermissionCard(
-                visible = !fileAccessGranted,
-                title = "File access needed",
-                description = "LinkToMac needs access to your phone's storage so you can browse and transfer files from your Mac.",
-                actionLabel = "Grant Access",
-                onAction = onRequestFileAccess
-            )
-        }
-        Spacer(Modifier.height(8.dp))
     }
 }
 
 @Composable
-private fun HeroCard(
-    paired: Boolean,
-    connectionState: ConnectionState,
-    darkTheme: Boolean,
-    onPrimaryAction: () -> Unit,
-    onNavigateToNotes: () -> Unit,
-    onNavigateToSettings: () -> Unit
-) {
-    // Follows the app theme like every other surface — only the tone (surfaceContainerHigh)
-    // is a step more elevated than the page background, so it still reads as a distinct "hero"
-    // in both light and dark mode instead of just in one of them.
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(28.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerHigh)
+private fun HeroCard(paired: Boolean, connectionState: ConnectionState) {
+    // Deliberately no Card/background of its own — sits directly on the page background like
+    // any other content, rather than reading as a separate floating panel.
+    Column(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        horizontalAlignment = Alignment.CenterHorizontally
     ) {
-        Column(
-            modifier = Modifier.fillMaxWidth().padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally
+        Box(
+            modifier = Modifier
+                .size(56.dp)
+                .clip(CircleShape)
+                .background(MaterialTheme.colorScheme.primaryContainer),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primaryContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    Icons.Filled.Smartphone,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onPrimaryContainer
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            Text(
-                "LinkToMac",
-                style = MaterialTheme.typography.headlineSmall,
-                color = MaterialTheme.colorScheme.onSurface
+            Icon(
+                Icons.Filled.Smartphone,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onPrimaryContainer
             )
-            Spacer(Modifier.height(4.dp))
-            Text(
-                "Mirror notifications, calls, and files with your Mac.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(16.dp))
-            StatusPill(paired = paired, connectionState = connectionState)
-            Spacer(Modifier.height(20.dp))
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceEvenly
-            ) {
-                QuickActionTile(
-                    label = if (paired) "Reconnect" else "Pair",
-                    icon = if (paired) Icons.Filled.Refresh else Icons.Filled.QrCodeScanner,
-                    accent = AccentBlue,
-                    containerColor = if (darkTheme) AccentBlueContainerDark else AccentBlueContainerLight,
-                    onClick = onPrimaryAction
-                )
-                QuickActionTile(
-                    label = "Notes",
-                    icon = Icons.AutoMirrored.Filled.Notes,
-                    accent = LinkGreen,
-                    containerColor = if (darkTheme) LinkGreenContainerDark else LinkGreenContainerLight,
-                    onClick = onNavigateToNotes
-                )
-                QuickActionTile(
-                    label = "Settings",
-                    icon = Icons.Filled.Settings,
-                    accent = AccentViolet,
-                    containerColor = if (darkTheme) AccentVioletContainerDark else AccentVioletContainerLight,
-                    onClick = onNavigateToSettings
-                )
-            }
         }
+        Spacer(Modifier.height(12.dp))
+        Text(
+            "LinkToMac",
+            style = MaterialTheme.typography.headlineSmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(Modifier.height(4.dp))
+        Text(
+            "Mirror notifications, calls, and files with your Mac.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = TextAlign.Center
+        )
+        Spacer(Modifier.height(16.dp))
+        StatusPill(paired = paired, connectionState = connectionState)
     }
 }
 
@@ -394,87 +370,157 @@ private fun StatusPill(paired: Boolean, connectionState: ConnectionState) {
 }
 
 @Composable
-private fun QuickActionTile(
-    label: String,
-    icon: ImageVector,
-    accent: Color,
-    containerColor: Color,
-    onClick: () -> Unit
+private fun PairedDeviceRow(
+    macName: String,
+    connectionState: ConnectionState,
+    onReconnect: () -> Unit,
+    onDisconnect: () -> Unit,
+    onForget: () -> Unit,
+    onOpenSyncOptions: () -> Unit
 ) {
-    Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Box(
-            modifier = Modifier
-                .size(64.dp)
-                .clip(RoundedCornerShape(18.dp))
-                .background(containerColor)
-                .clickable(onClick = onClick),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(icon, contentDescription = label, tint = accent)
+    val connected = connectionState is ConnectionState.Connected
+    val busy = connectionState is ConnectionState.Connected || connectionState is ConnectionState.Connecting
+    Card(onClick = onOpenSyncOptions, modifier = Modifier.fillMaxWidth()) {
+        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (connected) MaterialTheme.colorScheme.primaryContainer
+                            else MaterialTheme.colorScheme.surfaceVariant
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        if (connected) Icons.Filled.Check else Icons.Filled.Laptop,
+                        contentDescription = null,
+                        tint = if (connected) MaterialTheme.colorScheme.onPrimaryContainer
+                        else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(macName, style = MaterialTheme.typography.titleMedium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        pairedStatusText(connectionState),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = pairedStatusColor(connectionState, MaterialTheme.colorScheme)
+                    )
+                }
+                Icon(
+                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                    contentDescription = "Sync options",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (busy) {
+                    OutlinedButton(onClick = onDisconnect) { Text("Disconnect") }
+                } else {
+                    OutlinedButton(onClick = onReconnect) { Text("Reconnect") }
+                }
+                TextButton(
+                    onClick = onForget,
+                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("Forget This Mac")
+                }
+            }
         }
-        Spacer(Modifier.height(8.dp))
-        Text(label, style = MaterialTheme.typography.labelMedium, color = accent)
     }
 }
 
 @Composable
-private fun PairedDeviceRow(
+private fun DeviceSyncOptionsView(
     macName: String,
-    connectionState: ConnectionState,
-    menuExpanded: Boolean,
-    onMenuExpandedChange: (Boolean) -> Unit,
-    onReconnect: () -> Unit,
-    onDisconnect: () -> Unit,
-    onForget: () -> Unit
+    initialOptions: Map<SyncCategory, Boolean>,
+    onToggle: (SyncCategory, Boolean) -> Unit,
+    onBack: () -> Unit
 ) {
-    val connected = connectionState is ConnectionState.Connected
+    var options by remember { mutableStateOf(initialOptions) }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 12.dp, vertical = 16.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            IconButton(onClick = onBack) {
+                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            }
+            Spacer(Modifier.width(4.dp))
+            Column {
+                Text("Sync Options", style = MaterialTheme.typography.titleLarge)
+                Text(macName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+
+        Column(
+            modifier = Modifier.padding(horizontal = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            SyncCategory.entries.forEach { category ->
+                SyncOptionRow(
+                    category = category,
+                    enabled = options[category] ?: true,
+                    onToggle = { newValue ->
+                        options = options + (category to newValue)
+                        onToggle(category, newValue)
+                    }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun SyncOptionRow(category: SyncCategory, enabled: Boolean, onToggle: (Boolean) -> Unit) {
+    val (icon, label, description) = syncCategoryDisplay(category)
     Card(modifier = Modifier.fillMaxWidth()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(16.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Box(
-                modifier = Modifier
-                    .size(44.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (connected) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    if (connected) Icons.Filled.Check else Icons.Filled.Laptop,
-                    contentDescription = null,
-                    tint = if (connected) MaterialTheme.colorScheme.onPrimaryContainer
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
-                Text(macName, style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(4.dp))
-                Text(
-                    pairedStatusText(connectionState),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = pairedStatusColor(connectionState, MaterialTheme.colorScheme)
-                )
+                Text(label, style = MaterialTheme.typography.titleMedium)
+                Spacer(Modifier.height(2.dp))
+                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Box {
-                IconButton(onClick = { onMenuExpandedChange(true) }) {
-                    Icon(Icons.Filled.MoreVert, contentDescription = "Device actions")
-                }
-                DropdownMenu(expanded = menuExpanded, onDismissRequest = { onMenuExpandedChange(false) }) {
-                    if (connectionState is ConnectionState.Connected || connectionState is ConnectionState.Connecting) {
-                        DropdownMenuItem(text = { Text("Disconnect") }, onClick = onDisconnect)
-                    } else {
-                        DropdownMenuItem(text = { Text("Reconnect") }, onClick = onReconnect)
-                    }
-                    DropdownMenuItem(text = { Text("Forget This Mac") }, onClick = onForget)
-                }
-            }
+            Spacer(Modifier.width(8.dp))
+            Switch(checked = enabled, onCheckedChange = onToggle)
         }
     }
+}
+
+private data class SyncCategoryDisplay(val icon: ImageVector, val label: String, val description: String)
+
+private fun syncCategoryDisplay(category: SyncCategory): SyncCategoryDisplay = when (category) {
+    SyncCategory.NOTIFICATIONS -> SyncCategoryDisplay(
+        Icons.Filled.Notifications, "Notifications", "Mirror phone notifications to your Mac."
+    )
+    SyncCategory.CALLS_AND_MESSAGES -> SyncCategoryDisplay(
+        Icons.Filled.Call, "Calls & Messages", "Show your call log and texts on your Mac."
+    )
+    SyncCategory.CONTACTS -> SyncCategoryDisplay(
+        Icons.Filled.Contacts, "Contacts", "Keep contacts in sync with your Mac."
+    )
+    SyncCategory.PHOTOS -> SyncCategoryDisplay(
+        Icons.Filled.Photo, "Photos", "Let your Mac browse new photos as they're taken."
+    )
+    SyncCategory.NOTES -> SyncCategoryDisplay(
+        Icons.AutoMirrored.Filled.Notes, "Notes", "Sync notes between this phone and your Mac."
+    )
+    SyncCategory.CLIPBOARD -> SyncCategoryDisplay(
+        Icons.Filled.ContentPaste, "Clipboard", "Share copied text with your Mac, and apply text copied there."
+    )
 }
 
 @Composable

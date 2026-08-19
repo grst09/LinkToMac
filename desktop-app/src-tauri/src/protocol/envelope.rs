@@ -467,6 +467,8 @@ pub struct NoteEntry {
     pub body: String,
     pub created_at: f64,
     pub updated_at: f64,
+    #[serde(default)]
+    pub is_pinned: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -514,4 +516,50 @@ pub struct NoteDeleteResultPayload {
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteSetPinnedPayload {
+    pub id: String,
+    pub is_pinned: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NoteSetPinnedResultPayload {
+    pub id: String,
+    pub success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+// MARK: - Sync settings (per-device sync toggles)
+
+/// The phone's current per-category sync toggles (`SyncCategory` on the Android side), pushed
+/// proactively on every connect and whenever a toggle changes — lets the Mac know *before*
+/// attempting a write whether it'll be accepted, rather than discovering it via a rejected
+/// note/contact/message result. Defaults (via `Default`) assume everything's on, matching
+/// behavior before this message type existed and covering the gap before the first push arrives.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncSettingsPayload {
+    pub notifications_enabled: bool,
+    pub calls_and_messages_enabled: bool,
+    pub contacts_enabled: bool,
+    pub photos_enabled: bool,
+    pub notes_enabled: bool,
+    pub clipboard_enabled: bool,
+}
+
+impl Default for SyncSettingsPayload {
+    fn default() -> Self {
+        Self {
+            notifications_enabled: true,
+            calls_and_messages_enabled: true,
+            contacts_enabled: true,
+            photos_enabled: true,
+            notes_enabled: true,
+            clipboard_enabled: true,
+        }
+    }
 }

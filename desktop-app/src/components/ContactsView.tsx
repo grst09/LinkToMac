@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { RefreshCw, UserPlus, CheckSquare, Square, Trash2, Users, Search as SearchIcon, Phone, Star } from "lucide-react";
+import { RefreshCw, UserPlus, CheckSquare, Square, Trash2, Users, Search as SearchIcon, Phone, Star, CloudOff } from "lucide-react";
 import { SectionHeader } from "./SectionHeader";
 import { SearchBar } from "./SearchBar";
 import { ResizableDivider } from "./ResizableDivider";
@@ -17,16 +17,28 @@ import {
   initContactsListeners,
   refreshContacts,
   deleteContact,
+  isPendingContact,
   useContactsStore,
   type Contact,
 } from "../store/contacts";
 import { initCallsListeners, useCallsStore } from "../store/calls";
+import { useSyncSettingsStore } from "../store/syncSettings";
 
 type SubTab = "contacts" | "calls";
+type ContactRowItem = Contact & { pending: boolean };
 
 export function ContactsView() {
-  const { contacts, loaded, lastSyncedAt, lastError } = useContactsStore();
+  const { contacts, pending, loaded, lastSyncedAt, lastError } = useContactsStore();
   const { calls, loaded: callsLoaded } = useCallsStore();
+  const contactsEnabled = useSyncSettingsStore((s) => s.settings.contactsEnabled);
+
+  const combinedContacts: ContactRowItem[] = useMemo(
+    () => [
+      ...pending.map((c) => ({ ...c, isStarred: false, pending: true })),
+      ...contacts.map((c) => ({ ...c, pending: false })),
+    ],
+    [contacts, pending]
+  );
 
   const [subTab, setSubTab] = useState<SubTab>("contacts");
   const [searchText, setSearchText] = useState("");
@@ -56,10 +68,10 @@ export function ContactsView() {
   }
 
   const filteredContacts = useMemo(() => {
-    if (!searchText.trim()) return contacts;
+    if (!searchText.trim()) return combinedContacts;
     const q = searchText.toLowerCase();
-    return contacts.filter((c) => c.name.toLowerCase().includes(q) || c.phoneNumber.includes(q));
-  }, [contacts, searchText]);
+    return combinedContacts.filter((c) => c.name.toLowerCase().includes(q) || c.phoneNumber.includes(q));
+  }, [combinedContacts, searchText]);
 
   const groupedContacts = useMemo(() => groupAlphabetically(filteredContacts), [filteredContacts]);
 
@@ -69,7 +81,7 @@ export function ContactsView() {
     return calls.filter((c) => (c.contactName ?? "").toLowerCase().includes(q) || c.number.includes(q));
   }, [calls, searchText]);
 
-  const selectedContact = contacts.find((c) => c.id === selectedContactId) ?? null;
+  const selectedContact = combinedContacts.find((c) => c.id === selectedContactId) ?? null;
   const selectedCall = calls.find((c) => c.id === selectedCallId) ?? null;
   const allChecked = filteredContacts.length > 0 && filteredContacts.every((c) => checkedIds.has(c.id));
 
@@ -79,7 +91,7 @@ export function ContactsView() {
         section={sectionMeta("contacts")}
         subtitle={
           subTab === "contacts"
-            ? `${contacts.length} contact${contacts.length === 1 ? "" : "s"}${lastSyncedAt ? ` · Updated ${new Date(lastSyncedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}`
+            ? `${combinedContacts.length} contact${combinedContacts.length === 1 ? "" : "s"}${lastSyncedAt ? ` · Updated ${new Date(lastSyncedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}`
             : `${calls.length} call${calls.length === 1 ? "" : "s"}`
         }
         trailing={
@@ -131,6 +143,13 @@ export function ContactsView() {
         }
       />
 
+      {!contactsEnabled && subTab === "contacts" && (
+        <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-orange-500/10 px-3 py-2 text-xs text-orange-700 dark:text-orange-400">
+          <CloudOff className="h-3.5 w-3.5 shrink-0" />
+          Contacts sync is off — new contacts stay on this Mac and sync to your phone once it's back on.
+        </div>
+      )}
+
       {lastError && (
         <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-orange-500/10 px-3 py-2 text-xs text-orange-700 dark:text-orange-400">
           {lastError}
@@ -160,7 +179,7 @@ export function ContactsView() {
           />
           <div className="flex-1 overflow-y-auto">
             {subTab === "contacts" ? (
-              !loaded ? null : contacts.length === 0 ? (
+              !loaded ? null : combinedContacts.length === 0 ? (
                 <Placeholder icon={Users} text="No contacts yet" />
               ) : filteredContacts.length === 0 ? (
                 <Placeholder icon={SearchIcon} text="No matching contacts" />
@@ -236,6 +255,8 @@ export function ContactsView() {
             ) : selectedContact ? (
               <ContactDetailPanel
                 contact={selectedContact}
+                pending={selectedContact.pending}
+                canEdit={contactsEnabled || isPendingContact(selectedContact.id)}
                 onEdit={() => setIsEditing(true)}
                 onDeleted={() => setSelectedContactId(null)}
               />
@@ -274,7 +295,7 @@ function ContactRow({
   checked,
   onClick,
 }: {
-  contact: Contact;
+  contact: ContactRowItem;
   selected: boolean;
   isSelecting: boolean;
   checked: boolean;
@@ -301,6 +322,14 @@ function ContactRow({
               {contact.name}
             </span>
             {contact.isStarred && <Star className="h-3 w-3 shrink-0 fill-yellow-400 text-yellow-400" />}
+            {contact.pending && (
+              <span
+                title="Not synced with your phone yet"
+                className="shrink-0 rounded-full bg-orange-500/10 px-1.5 py-0.5 text-[10px] font-medium text-orange-600 dark:text-orange-400"
+              >
+                Not synced
+              </span>
+            )}
           </div>
           <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">{contact.phoneNumber}</p>
         </div>
@@ -324,8 +353,8 @@ function IconButton({ icon: Icon, title, onClick }: { icon: typeof RefreshCw; ti
 /** Group by first letter (uppercased) if it's a letter, else bucket into "#" — sections sorted
  *  so "#" sorts before "A" (matches Swift's default string ordering), contacts within a section
  *  sorted case-insensitively. Ported from ContactsView.swift's `groupedContacts`. */
-function groupAlphabetically(contacts: Contact[]): [string, Contact[]][] {
-  const groups = new Map<string, Contact[]>();
+function groupAlphabetically(contacts: ContactRowItem[]): [string, ContactRowItem[]][] {
+  const groups = new Map<string, ContactRowItem[]>();
   for (const contact of contacts) {
     const trimmed = contact.name.trim();
     const first = trimmed[0]?.toUpperCase() ?? "";

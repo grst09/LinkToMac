@@ -395,7 +395,8 @@ data class NoteEntry(
     val title: String,
     val body: String,
     val createdAt: Double, // epoch millis
-    val updatedAt: Double // epoch millis
+    val updatedAt: Double, // epoch millis
+    val isPinned: Boolean = false
 )
 
 @Serializable
@@ -422,6 +423,20 @@ data class NoteUpdatePayload(
     val body: String
 )
 
+/** The phone's current per-category sync toggles (`SyncCategory` in AppSettingsStore.kt) —
+ *  pushed to the Mac on every connect and whenever a toggle changes, so it knows the current
+ *  state before attempting a write rather than discovering it via a rejected result. Field names
+ *  match `SyncSettingsPayload` in the Mac's protocol/envelope.rs. */
+@Serializable
+data class SyncSettingsPayload(
+    val notificationsEnabled: Boolean,
+    val callsAndMessagesEnabled: Boolean,
+    val contactsEnabled: Boolean,
+    val photosEnabled: Boolean,
+    val notesEnabled: Boolean,
+    val clipboardEnabled: Boolean
+)
+
 @Serializable
 data class NoteUpdateResultPayload(
     val id: String,
@@ -436,6 +451,19 @@ data class NoteDeletePayload(
 
 @Serializable
 data class NoteDeleteResultPayload(
+    val id: String,
+    val success: Boolean,
+    val error: String? = null
+)
+
+@Serializable
+data class NoteSetPinnedPayload(
+    val id: String,
+    val isPinned: Boolean
+)
+
+@Serializable
+data class NoteSetPinnedResultPayload(
     val id: String,
     val success: Boolean,
     val error: String? = null

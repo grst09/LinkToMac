@@ -14,7 +14,8 @@ use crate::protocol::envelope::{
     FilesTransferResultPayload, FilesUploadResultPayload, Message, MirrorConfigPayload,
     MirrorStoppedPayload, NoteCreateResultPayload, NoteDeleteResultPayload,
     NoteUpdateResultPayload, NotesSyncPayload, NotificationPostedPayload,
-    NotificationRemovedPayload, PhotoFullPayload, PhotoPagePayload, SmsSyncPayload,
+    NoteSetPinnedResultPayload, NotificationRemovedPayload, PhotoFullPayload, PhotoPagePayload,
+    SmsSyncPayload, SyncSettingsPayload,
 };
 
 pub mod contacts;
@@ -23,6 +24,7 @@ pub mod mirror;
 pub mod notes;
 pub mod notifications;
 pub mod photos;
+pub mod sync_settings;
 
 pub async fn handle(message: Message, state: &std::sync::Arc<AppState>) -> anyhow::Result<()> {
     match message.message_type.as_str() {
@@ -146,6 +148,14 @@ pub async fn handle(message: Message, state: &std::sync::Arc<AppState>) -> anyho
         "notes.deleteResult" => {
             let payload: NoteDeleteResultPayload = serde_json::from_value(message.payload)?;
             notes::delete_result(payload, state).await;
+        }
+        "note.setPinnedResult" => {
+            let payload: NoteSetPinnedResultPayload = serde_json::from_value(message.payload)?;
+            notes::set_pinned_result(payload, state).await;
+        }
+        "sync.settings" => {
+            let payload: SyncSettingsPayload = serde_json::from_value(message.payload)?;
+            sync_settings::update(payload, state).await;
         }
         other => {
             tracing::info!("received {} (dispatch not yet implemented)", other);

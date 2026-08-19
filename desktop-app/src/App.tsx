@@ -14,6 +14,7 @@ import { SettingsView } from "./components/SettingsView";
 import { type SectionId } from "./theme/sections";
 import { initConnectionListeners } from "./store/connection";
 import { initNotificationListeners } from "./store/notifications";
+import { initSyncSettingsListeners } from "./store/syncSettings";
 import { useNavigationStore, clearPendingSection } from "./store/navigation";
 
 function App() {
@@ -24,6 +25,7 @@ function App() {
   useEffect(() => {
     initConnectionListeners();
     initNotificationListeners();
+    initSyncSettingsListeners();
   }, []);
 
   // Contacts' "Message" action sets pendingMessageAddress — switch to Messages so it can

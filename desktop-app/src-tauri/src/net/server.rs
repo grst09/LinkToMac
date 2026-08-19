@@ -25,8 +25,12 @@ use crate::protocol::envelope::{
     EmptyPayload, EncryptedFrame, HelloAckPayload, HelloPayload, Message, PairingQrPayload,
     ServerHelloPayload,
 };
+use crate::protocol::envelope::SyncSettingsPayload;
 use crate::store::identity::IdentityStore;
+use crate::store::local_contacts::LocalContactsStore;
+use crate::store::local_notes::LocalNotesStore;
 use crate::store::paired_devices::PairedDeviceStore;
+use crate::store::pending_messages::PendingMessagesStore;
 
 pub const PORT: u16 = 53821;
 const SERVICE_TYPE: &str = "_linktomac._tcp.local.";
@@ -71,15 +75,25 @@ pub struct AppState {
     pub photos: Mutex<crate::photos::PhotoState>,
     pub files: Mutex<crate::files::FileState>,
     pub mirror: Mutex<crate::mirror::MirrorState>,
+    /// The phone's last-pushed per-category sync toggles — see `SyncSettingsPayload`'s doc
+    /// comment. Defaults to all-enabled until the first `sync.settings` push arrives.
+    pub sync_settings: Mutex<SyncSettingsPayload>,
+    pub local_notes: Mutex<LocalNotesStore>,
+    pub local_contacts: Mutex<LocalContactsStore>,
+    pub pending_messages: Mutex<PendingMessagesStore>,
     pub app_handle: tauri::AppHandle,
     _mdns: ServiceDaemon,
 }
 
 impl AppState {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         identity: IdentityStore,
         paired_devices: PairedDeviceStore,
         settings: crate::store::settings::SettingsStore,
+        local_notes: LocalNotesStore,
+        local_contacts: LocalContactsStore,
+        pending_messages: PendingMessagesStore,
         app_handle: tauri::AppHandle,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mdns = start_mdns(&identity)?;
@@ -101,6 +115,10 @@ impl AppState {
             photos: Mutex::new(crate::photos::PhotoState::default()),
             files: Mutex::new(crate::files::FileState::default()),
             mirror: Mutex::new(crate::mirror::MirrorState::default()),
+            sync_settings: Mutex::new(SyncSettingsPayload::default()),
+            local_notes: Mutex::new(local_notes),
+            local_contacts: Mutex::new(local_contacts),
+            pending_messages: Mutex::new(pending_messages),
             app_handle,
             _mdns: mdns,
         })

@@ -28,9 +28,11 @@ import com.linktomac.net.MacConnection
 import com.linktomac.net.MacDiscovery
 import com.linktomac.net.NotificationPostedPayload
 import com.linktomac.net.PairingQrPayload
+import com.linktomac.net.SyncSettingsPayload
 import com.linktomac.storage.AppSettingsStore
 import com.linktomac.storage.NoteStore
 import com.linktomac.storage.PairedDeviceStore
+import com.linktomac.storage.SyncCategory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -99,15 +101,22 @@ class SyncForegroundService : Service() {
         connection.onNotificationDismissRequested = { id ->
             PhoneNotificationListenerService.instance?.cancel(id)
         }
-        connection.onSmsSendRequested = { address, body -> smsRepository.send(address, body) }
+        connection.onSmsSendRequested = { address, body ->
+            if (appSettingsStore.callsAndMessagesSyncEnabled) smsRepository.send(address, body)
+        }
         connection.onPhotoPageRequested = { offset, limit ->
             scope.launch(Dispatchers.IO) {
+                if (!appSettingsStore.photosSyncEnabled) {
+                    connection.sendPhotoPage(emptyList(), hasMore = false)
+                    return@launch
+                }
                 val (photos, hasMore) = photoRepository.readPage(offset, limit)
                 connection.sendPhotoPage(photos, hasMore)
             }
         }
         connection.onPhotoFullRequested = { id ->
             scope.launch(Dispatchers.IO) {
+                if (!appSettingsStore.photosSyncEnabled) return@launch
                 photoRepository.readFull(id)?.let { (bytes, mimeType) ->
                     connection.sendPhotoFull(id, Base64.encodeToString(bytes, Base64.NO_WRAP), mimeType)
                 }
@@ -203,7 +212,9 @@ class SyncForegroundService : Service() {
             }
         }
         connection.onContactsRefreshRequested = {
-            scope.launch(Dispatchers.IO) { connection.sendContactsSync(contactRepository.readAll()) }
+            if (appSettingsStore.contactsSyncEnabled) {
+                scope.launch(Dispatchers.IO) { connection.sendContactsSync(contactRepository.readAll()) }
+            }
         }
         connection.onContactsDialRequested = { phoneNumber ->
             val intent = Intent(Intent.ACTION_DIAL, Uri.parse("tel:$phoneNumber")).apply {
@@ -213,6 +224,10 @@ class SyncForegroundService : Service() {
         }
         connection.onContactUpdateRequested = { payload ->
             scope.launch(Dispatchers.IO) {
+                if (!appSettingsStore.contactsSyncEnabled) {
+                    connection.sendContactUpdateResult(payload.id, false, "Contacts sync is off")
+                    return@launch
+                }
                 val success = contactRepository.update(
                     payload.id, payload.name, payload.phoneNumber, payload.isStarred, payload.email, payload.organization
                 )
@@ -222,6 +237,10 @@ class SyncForegroundService : Service() {
         }
         connection.onContactCreateRequested = { payload ->
             scope.launch(Dispatchers.IO) {
+                if (!appSettingsStore.contactsSyncEnabled) {
+                    connection.sendContactCreateResult(false, "Contacts sync is off")
+                    return@launch
+                }
                 val success = contactRepository.create(payload.name, payload.phoneNumber, payload.email, payload.organization)
                 connection.sendContactCreateResult(success, if (success) null else "Couldn't create that contact")
                 if (success) connection.sendContactsSync(contactRepository.readAll())
@@ -229,19 +248,31 @@ class SyncForegroundService : Service() {
         }
         connection.onContactDeleteRequested = { id ->
             scope.launch(Dispatchers.IO) {
+                if (!appSettingsStore.contactsSyncEnabled) {
+                    connection.sendContactDeleteResult(id, false, "Contacts sync is off")
+                    return@launch
+                }
                 val success = contactRepository.delete(id)
                 connection.sendContactDeleteResult(id, success, if (success) null else "Couldn't delete that contact")
                 if (success) connection.sendContactsSync(contactRepository.readAll())
             }
         }
         connection.onMessagesRefreshRequested = {
-            scope.launch(Dispatchers.IO) { connection.sendSmsSync(smsRepository.readThreads()) }
+            if (appSettingsStore.callsAndMessagesSyncEnabled) {
+                scope.launch(Dispatchers.IO) { connection.sendSmsSync(smsRepository.readThreads()) }
+            }
         }
         connection.onNotesRefreshRequested = {
-            scope.launch(Dispatchers.IO) { connection.sendNotesSync(noteStore.readAll()) }
+            if (appSettingsStore.notesSyncEnabled) {
+                scope.launch(Dispatchers.IO) { connection.sendNotesSync(noteStore.readAll()) }
+            }
         }
         connection.onNoteCreateRequested = { payload ->
             scope.launch(Dispatchers.IO) {
+                if (!appSettingsStore.notesSyncEnabled) {
+                    connection.sendNoteCreateResult(false, "Notes sync is off")
+                    return@launch
+                }
                 val note = noteStore.create(payload.title, payload.body)
                 connection.sendNoteCreateResult(true)
                 connection.sendNotesSync(noteStore.readAll())
@@ -250,6 +281,10 @@ class SyncForegroundService : Service() {
         }
         connection.onNoteUpdateRequested = { payload ->
             scope.launch(Dispatchers.IO) {
+                if (!appSettingsStore.notesSyncEnabled) {
+                    connection.sendNoteUpdateResult(payload.id, false, "Notes sync is off")
+                    return@launch
+                }
                 val success = noteStore.update(payload.id, payload.title, payload.body)
                 connection.sendNoteUpdateResult(payload.id, success, if (success) null else "Couldn't find that note")
                 if (success) connection.sendNotesSync(noteStore.readAll())
@@ -257,17 +292,35 @@ class SyncForegroundService : Service() {
         }
         connection.onNoteDeleteRequested = { id ->
             scope.launch(Dispatchers.IO) {
+                if (!appSettingsStore.notesSyncEnabled) {
+                    connection.sendNoteDeleteResult(id, false, "Notes sync is off")
+                    return@launch
+                }
                 val success = noteStore.delete(id)
                 connection.sendNoteDeleteResult(id, success, if (success) null else "Couldn't find that note")
+                if (success) connection.sendNotesSync(noteStore.readAll())
+            }
+        }
+        connection.onNoteSetPinnedRequested = { payload ->
+            scope.launch(Dispatchers.IO) {
+                if (!appSettingsStore.notesSyncEnabled) {
+                    connection.sendNoteSetPinnedResult(payload.id, false, "Notes sync is off")
+                    return@launch
+                }
+                val success = noteStore.setPinned(payload.id, payload.isPinned)
+                connection.sendNoteSetPinnedResult(payload.id, success, if (success) null else "Couldn't find that note")
                 if (success) connection.sendNotesSync(noteStore.readAll())
             }
         }
         connection.state.onEach { state ->
             if (!manuallyDisconnected) updateNotification(state)
             if (state is ConnectionState.Connected) {
-                syncCallsAndSms()
-                connection.sendContactsSync(contactRepository.readAll())
-                connection.sendNotesSync(noteStore.readAll())
+                // Sent before anything else so the Mac knows what's actually enabled before it
+                // sees any sync data arrive (or not) — see SyncCategory's doc comment.
+                connection.sendSyncSettings(currentSyncSettingsPayload())
+                if (appSettingsStore.callsAndMessagesSyncEnabled) syncCallsAndSms()
+                if (appSettingsStore.contactsSyncEnabled) connection.sendContactsSync(contactRepository.readAll())
+                if (appSettingsStore.notesSyncEnabled) connection.sendNotesSync(noteStore.readAll())
                 batteryStatusRepository.readCurrent()?.let { connection.sendDeviceStatus(it) }
             }
         }.launchIn(scope)
@@ -289,21 +342,44 @@ class SyncForegroundService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_PAIR -> intent.getStringExtra(EXTRA_QR_PAYLOAD)?.let { pairWithQrPayload(it) }
-            ACTION_NOTIFICATION_POSTED -> intent.getStringExtra(EXTRA_NOTIFICATION_JSON)?.let {
-                connection.sendNotificationPosted(json.decodeFromString(NotificationPostedPayload.serializer(), it))
+            ACTION_NOTIFICATION_POSTED -> if (appSettingsStore.notificationsSyncEnabled) {
+                intent.getStringExtra(EXTRA_NOTIFICATION_JSON)?.let {
+                    connection.sendNotificationPosted(json.decodeFromString(NotificationPostedPayload.serializer(), it))
+                }
             }
-            ACTION_NOTIFICATION_REMOVED -> intent.getStringExtra(EXTRA_NOTIFICATION_ID)?.let {
-                connection.sendNotificationRemoved(it)
+            ACTION_NOTIFICATION_REMOVED -> if (appSettingsStore.notificationsSyncEnabled) {
+                intent.getStringExtra(EXTRA_NOTIFICATION_ID)?.let {
+                    connection.sendNotificationRemoved(it)
+                }
             }
             ACTION_REFRESH_DATA -> {
                 callLogRepository.observe { scheduleSync() }
                 smsRepository.observe { scheduleSync() }
                 contactRepository.observe { scheduleContactSync() }
-                syncCallsAndSms()
-                connection.sendContactsSync(contactRepository.readAll())
+                if (appSettingsStore.callsAndMessagesSyncEnabled) syncCallsAndSms()
+                if (appSettingsStore.contactsSyncEnabled) connection.sendContactsSync(contactRepository.readAll())
             }
             ACTION_REFRESH_PHOTOS -> photoRepository.observe { schedulePhotoLibraryChangedNotification() }
-            ACTION_NOTES_CHANGED -> connection.sendNotesSync(noteStore.readAll())
+            ACTION_NOTES_CHANGED -> if (appSettingsStore.notesSyncEnabled) connection.sendNotesSync(noteStore.readAll())
+            ACTION_SYNC_SETTING_CHANGED -> {
+                val categoryName = intent.getStringExtra(EXTRA_SYNC_CATEGORY)
+                val enabled = intent.getBooleanExtra(EXTRA_SYNC_ENABLED, true)
+                val category = categoryName?.let { runCatching { SyncCategory.valueOf(it) }.getOrNull() }
+                if (category != null) {
+                    val wasEnabled = appSettingsStore.isSyncEnabled(category)
+                    appSettingsStore.setSyncEnabled(category, enabled)
+                    if (connection.state.value is ConnectionState.Connected) {
+                        connection.sendSyncSettings(currentSyncSettingsPayload())
+                        // The Mac's own reconciliation (dispatch::sync_settings::reconcile_*)
+                        // only pushes whatever *it* queued locally while this category was off —
+                        // it has no way to know about changes made independently on the phone
+                        // during that window (e.g. a note created directly in the phone's Notes
+                        // tab). Pushing a fresh full sync here is what actually catches the Mac
+                        // up on those.
+                        if (!wasEnabled && enabled) pushFreshSync(category)
+                    }
+                }
+            }
             ACTION_RECONNECT -> if (pairedDeviceStore.isPaired) {
                 manuallyDisconnected = false
                 startForeground(NOTIFICATION_ID, buildNotification(connection.state.value))
@@ -370,7 +446,7 @@ class SyncForegroundService : Service() {
         contactSyncJob?.cancel()
         contactSyncJob = scope.launch {
             delay(750)
-            if (connection.state.value is ConnectionState.Connected) {
+            if (connection.state.value is ConnectionState.Connected && appSettingsStore.contactsSyncEnabled) {
                 connection.sendContactsSync(contactRepository.readAll())
             }
         }
@@ -381,7 +457,7 @@ class SyncForegroundService : Service() {
         syncJob?.cancel()
         syncJob = scope.launch {
             delay(750)
-            if (connection.state.value is ConnectionState.Connected) {
+            if (connection.state.value is ConnectionState.Connected && appSettingsStore.callsAndMessagesSyncEnabled) {
                 syncCallsAndSms()
             }
         }
@@ -392,9 +468,33 @@ class SyncForegroundService : Service() {
         photoLibraryChangedJob?.cancel()
         photoLibraryChangedJob = scope.launch {
             delay(750)
-            if (connection.state.value is ConnectionState.Connected) {
+            if (connection.state.value is ConnectionState.Connected && appSettingsStore.photosSyncEnabled) {
                 connection.sendPhotoLibraryChanged()
             }
+        }
+    }
+
+    private fun currentSyncSettingsPayload() = SyncSettingsPayload(
+        notificationsEnabled = appSettingsStore.notificationsSyncEnabled,
+        callsAndMessagesEnabled = appSettingsStore.callsAndMessagesSyncEnabled,
+        contactsEnabled = appSettingsStore.contactsSyncEnabled,
+        photosEnabled = appSettingsStore.photosSyncEnabled,
+        notesEnabled = appSettingsStore.notesSyncEnabled,
+        clipboardEnabled = appSettingsStore.clipboardSyncEnabled
+    )
+
+    /** Pushes the phone's current state for one category right after its toggle flips on — see
+     *  the call site's comment. Notifications/Photos/Clipboard have no "current snapshot" to
+     *  proactively push (notifications are discrete events, Photos is pulled on-demand by the
+     *  Mac, Clipboard has no history), so those are no-ops here. */
+    private fun pushFreshSync(category: SyncCategory) {
+        when (category) {
+            SyncCategory.NOTIFICATIONS -> {}
+            SyncCategory.CALLS_AND_MESSAGES -> syncCallsAndSms()
+            SyncCategory.CONTACTS -> connection.sendContactsSync(contactRepository.readAll())
+            SyncCategory.PHOTOS -> {}
+            SyncCategory.NOTES -> connection.sendNotesSync(noteStore.readAll())
+            SyncCategory.CLIPBOARD -> {}
         }
     }
 
@@ -477,9 +577,12 @@ class SyncForegroundService : Service() {
         private const val ACTION_RECONNECT = "com.linktomac.action.RECONNECT"
         private const val ACTION_DISCONNECT = "com.linktomac.action.DISCONNECT"
         private const val ACTION_FORGET = "com.linktomac.action.FORGET"
+        private const val ACTION_SYNC_SETTING_CHANGED = "com.linktomac.action.SYNC_SETTING_CHANGED"
         private const val EXTRA_QR_PAYLOAD = "qr_payload"
         private const val EXTRA_NOTIFICATION_JSON = "notification_json"
         private const val EXTRA_NOTIFICATION_ID = "notification_id"
+        private const val EXTRA_SYNC_CATEGORY = "sync_category"
+        private const val EXTRA_SYNC_ENABLED = "sync_enabled"
 
         var instance: SyncForegroundService? = null
             private set
@@ -587,6 +690,18 @@ class SyncForegroundService : Service() {
         fun forgetPairedDevice(context: Context) {
             val intent = Intent(context, SyncForegroundService::class.java).apply {
                 action = ACTION_FORGET
+            }
+            context.startForegroundService(intent)
+        }
+
+        /** Persists the toggle and, if currently connected, immediately pushes the full updated
+         *  set to the Mac (see [SyncSettingsPayload]) so it can react right away — e.g. flush
+         *  anything it queued locally while this category was off. */
+        fun updateSyncSetting(context: Context, category: SyncCategory, enabled: Boolean) {
+            val intent = Intent(context, SyncForegroundService::class.java).apply {
+                action = ACTION_SYNC_SETTING_CHANGED
+                putExtra(EXTRA_SYNC_CATEGORY, category.name)
+                putExtra(EXTRA_SYNC_ENABLED, enabled)
             }
             context.startForegroundService(intent)
         }

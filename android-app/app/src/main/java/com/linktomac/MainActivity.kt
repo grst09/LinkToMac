@@ -50,6 +50,7 @@ import com.linktomac.service.SyncForegroundService
 import com.linktomac.storage.AppSettingsStore
 import com.linktomac.storage.NoteStore
 import com.linktomac.storage.PairedDeviceStore
+import com.linktomac.storage.SyncCategory
 import com.linktomac.ui.NotesScreen
 import com.linktomac.ui.PairingScreen
 import com.linktomac.ui.SettingsScreen
@@ -207,19 +208,21 @@ class MainActivity : ComponentActivity() {
                                 onForgetDevice = { SyncForegroundService.forgetPairedDevice(applicationContext) },
                                 onScanRequested = { requestCameraAndScan() },
                                 onStartService = { SyncForegroundService.start(applicationContext) },
-                                onNavigateToNotes = { selectedTab = 1 },
-                                onNavigateToSettings = { selectedTab = 2 },
-                                darkTheme = darkTheme
+                                syncOptions = {
+                                    SyncCategory.entries.associateWith { appSettingsStore.isSyncEnabled(it) }
+                                },
+                                onSyncOptionChanged = { category, enabled ->
+                                    SyncForegroundService.updateSyncSetting(applicationContext, category, enabled)
+                                }
                             )
                             1 -> NotesScreen(
                                 noteStore = noteStore,
-                                onChanged = { SyncForegroundService.notifyNotesChangedLocally(applicationContext) }
+                                onChanged = { SyncForegroundService.notifyNotesChangedLocally(applicationContext) },
+                                onSyncRequested = { SyncForegroundService.notifyNotesChangedLocally(applicationContext) }
                             )
                             else -> SettingsScreen(
                                 isBatteryOptimizationIgnored = { isBatteryOptimizationIgnored() },
                                 onRequestIgnoreBatteryOptimization = { requestIgnoreBatteryOptimization() },
-                                clipboardSyncEnabled = { appSettingsStore.clipboardSyncEnabled },
-                                onClipboardSyncChanged = { appSettingsStore.clipboardSyncEnabled = it },
                                 themeMode = themeMode,
                                 onThemeModeChanged = {
                                     themeMode = it

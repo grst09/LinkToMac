@@ -16,6 +16,12 @@ import java.util.UUID
  * docs/PROTOCOL.md's Phase 8 notes), so this is genuinely this app's own data. Stored as a
  * single JSON-encoded list, same `EncryptedSharedPreferences` approach as [PairedDeviceStore]
  * rather than a full database — Notes doesn't need the scale Photos/Files do.
+ *
+ * All mutations go through [synchronized] on this instance — `readAll() + mutate` is a
+ * read-modify-write over one shared file, and reconciliation (see `SyncForegroundService`'s
+ * `onNoteCreateRequested`) can fire several creates back-to-back on independent coroutines;
+ * without a lock two concurrent creates can each read the same starting list and each write
+ * back their own version, silently dropping one.
  */
 class NoteStore(context: Context) {
     private val prefs: SharedPreferences
@@ -34,7 +40,8 @@ class NoteStore(context: Context) {
         )
     }
 
-    /** Newest-edited first — matches how a notes list is most useful to scan. */
+    /** Pinned first, then newest-edited first within each group — matches how the note list UI
+     *  is sectioned on both platforms. */
     fun readAll(): List<NoteEntry> {
         val raw = prefs.getString(KEY_NOTES, null) ?: return emptyList()
         val notes = try {
@@ -42,36 +49,52 @@ class NoteStore(context: Context) {
         } catch (e: Exception) {
             emptyList()
         }
-        return notes.sortedByDescending { it.updatedAt }
+        return notes.sortedWith(compareByDescending<NoteEntry> { it.isPinned }.thenByDescending { it.updatedAt })
     }
 
-    fun create(title: String, body: String): NoteEntry {
+    fun create(title: String, body: String): NoteEntry = synchronized(this) {
         val now = System.currentTimeMillis().toDouble()
         val note = NoteEntry(id = UUID.randomUUID().toString(), title = title, body = body, createdAt = now, updatedAt = now)
-        writeAll(readAll() + note)
-        return note
+        writeAllLocked(readAllUnsorted() + note)
+        note
     }
 
-    fun update(id: String, title: String, body: String): Boolean {
-        val existing = readAll()
-        if (existing.none { it.id == id }) return false
-        writeAll(
+    fun update(id: String, title: String, body: String): Boolean = synchronized(this) {
+        val existing = readAllUnsorted()
+        if (existing.none { it.id == id }) return@synchronized false
+        writeAllLocked(
             existing.map {
                 if (it.id == id) it.copy(title = title, body = body, updatedAt = System.currentTimeMillis().toDouble()) else it
             }
         )
-        return true
+        true
     }
 
-    fun delete(id: String): Boolean {
-        val existing = readAll()
+    fun delete(id: String): Boolean = synchronized(this) {
+        val existing = readAllUnsorted()
         val remaining = existing.filter { it.id != id }
-        if (remaining.size == existing.size) return false
-        writeAll(remaining)
-        return true
+        if (remaining.size == existing.size) return@synchronized false
+        writeAllLocked(remaining)
+        true
     }
 
-    private fun writeAll(notes: List<NoteEntry>) {
+    fun setPinned(id: String, pinned: Boolean): Boolean = synchronized(this) {
+        val existing = readAllUnsorted()
+        if (existing.none { it.id == id }) return@synchronized false
+        writeAllLocked(existing.map { if (it.id == id) it.copy(isPinned = pinned) else it })
+        true
+    }
+
+    private fun readAllUnsorted(): List<NoteEntry> {
+        val raw = prefs.getString(KEY_NOTES, null) ?: return emptyList()
+        return try {
+            json.decodeFromString<List<NoteEntry>>(raw)
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun writeAllLocked(notes: List<NoteEntry>) {
         prefs.edit().putString(KEY_NOTES, json.encodeToString(notes)).apply()
     }
 

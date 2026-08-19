@@ -90,6 +90,7 @@ class MacConnection(
     var onNoteCreateRequested: ((NoteCreatePayload) -> Unit)? = null
     var onNoteUpdateRequested: ((NoteUpdatePayload) -> Unit)? = null
     var onNoteDeleteRequested: ((id: String) -> Unit)? = null
+    var onNoteSetPinnedRequested: ((NoteSetPinnedPayload) -> Unit)? = null
 
     /** Connect using a freshly scanned QR pairing payload. */
     fun connectForPairing(payload: PairingQrPayload) {
@@ -277,6 +278,10 @@ class MacConnection(
                     val payload = json.decodeFromJsonElement<NoteDeletePayload>(envelope.payload)
                     onNoteDeleteRequested?.invoke(payload.id)
                 }
+                "note.setPinned" -> {
+                    val payload = json.decodeFromJsonElement<NoteSetPinnedPayload>(envelope.payload)
+                    onNoteSetPinnedRequested?.invoke(payload)
+                }
                 "pong" -> {}
             }
         } catch (e: Exception) {
@@ -453,6 +458,14 @@ class MacConnection(
 
     fun sendNoteDeleteResult(id: String, success: Boolean, error: String? = null) {
         send("notes.deleteResult", json.encodeToJsonElement(NoteDeleteResultPayload(id, success, error)))
+    }
+
+    fun sendNoteSetPinnedResult(id: String, success: Boolean, error: String? = null) {
+        send("note.setPinnedResult", json.encodeToJsonElement(NoteSetPinnedResultPayload(id, success, error)))
+    }
+
+    fun sendSyncSettings(settings: SyncSettingsPayload) {
+        send("sync.settings", json.encodeToJsonElement(settings))
     }
 
     /** Binary WebSocket frame, not the JSON envelope — see docs/PROTOCOL.md's Phase 4 binary

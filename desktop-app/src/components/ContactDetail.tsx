@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
-import { Phone, MessageCircle, Copy, Check, Pencil, Trash2, Star, Users, X } from "lucide-react";
+import { Phone, MessageCircle, Copy, Check, Pencil, Trash2, Star, Users, X, CloudOff } from "lucide-react";
 import { InitialsAvatar } from "./InitialsAvatar";
 import { avatarColorHex } from "../theme/avatarColor";
 import { requestMessageTo } from "../store/navigation";
@@ -8,10 +8,14 @@ import { dialContact, updateContact, createContact, deleteContact, type Contact 
 
 export function ContactDetailPanel({
   contact,
+  pending,
+  canEdit,
   onEdit,
   onDeleted,
 }: {
   contact: Contact;
+  pending: boolean;
+  canEdit: boolean;
   onEdit: () => void;
   onDeleted: () => void;
 }) {
@@ -44,6 +48,12 @@ export function ContactDetailPanel({
               Starred
             </div>
           )}
+          {pending && (
+            <div className="flex items-center gap-1 text-xs text-orange-600 dark:text-orange-400">
+              <CloudOff className="h-3 w-3" />
+              Not synced with your phone yet
+            </div>
+          )}
         </div>
 
         <div className="flex gap-5">
@@ -69,23 +79,25 @@ export function ContactDetailPanel({
           {contact.organization && <InfoRow label="organization" value={contact.organization} border />}
         </div>
 
-        <div className="w-full max-w-[360px] overflow-hidden rounded-[10px]">
-          <button
-            onClick={onEdit}
-            className="flex w-full items-center justify-between bg-black/[0.03] dark:bg-white/[0.06] px-3 py-3 text-[13px] font-medium text-blue-600 dark:text-blue-400 hover:bg-black/[0.06] dark:hover:bg-white/[0.1] transition-colors"
-          >
-            Edit Contact
-            <Pencil className="h-4 w-4" />
-          </button>
-          <div className="h-px bg-black/5 dark:bg-white/10" />
-          <button
-            onClick={() => setConfirmingDelete(true)}
-            className="flex w-full items-center justify-between bg-black/[0.03] dark:bg-white/[0.06] px-3 py-3 text-[13px] font-medium text-red-600 dark:text-red-400 hover:bg-black/[0.06] dark:hover:bg-white/[0.1] transition-colors"
-          >
-            Delete Contact
-            <Trash2 className="h-4 w-4" />
-          </button>
-        </div>
+        {canEdit && (
+          <div className="w-full max-w-[360px] overflow-hidden rounded-[10px]">
+            <button
+              onClick={onEdit}
+              className="flex w-full items-center justify-between bg-black/[0.03] dark:bg-white/[0.06] px-3 py-3 text-[13px] font-medium text-blue-600 dark:text-blue-400 hover:bg-black/[0.06] dark:hover:bg-white/[0.1] transition-colors"
+            >
+              Edit Contact
+              <Pencil className="h-4 w-4" />
+            </button>
+            <div className="h-px bg-black/5 dark:bg-white/10" />
+            <button
+              onClick={() => setConfirmingDelete(true)}
+              className="flex w-full items-center justify-between bg-black/[0.03] dark:bg-white/[0.06] px-3 py-3 text-[13px] font-medium text-red-600 dark:text-red-400 hover:bg-black/[0.06] dark:hover:bg-white/[0.1] transition-colors"
+            >
+              Delete Contact
+              <Trash2 className="h-4 w-4" />
+            </button>
+          </div>
+        )}
       </motion.div>
 
       {confirmingDelete && (

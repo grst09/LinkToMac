@@ -2,7 +2,8 @@ use tauri::Emitter;
 
 use crate::net::server::AppState;
 use crate::protocol::envelope::{
-    NoteCreateResultPayload, NoteDeleteResultPayload, NoteUpdateResultPayload, NotesSyncPayload,
+    NoteCreateResultPayload, NoteDeleteResultPayload, NoteSetPinnedResultPayload,
+    NoteUpdateResultPayload, NotesSyncPayload,
 };
 
 /// Full-snapshot replace, newest-edited first — matches `NoteStore.readAll` on the Android side.
@@ -30,6 +31,12 @@ pub async fn update_result(payload: NoteUpdateResultPayload, state: &std::sync::
 }
 
 pub async fn delete_result(payload: NoteDeleteResultPayload, state: &std::sync::Arc<AppState>) {
+    if !payload.success {
+        emit_error(state, payload.error).await;
+    }
+}
+
+pub async fn set_pinned_result(payload: NoteSetPinnedResultPayload, state: &std::sync::Arc<AppState>) {
     if !payload.success {
         emit_error(state, payload.error).await;
     }

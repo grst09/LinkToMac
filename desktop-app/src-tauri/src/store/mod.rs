@@ -3,5 +3,8 @@
 #![allow(dead_code)]
 
 pub mod identity;
+pub mod local_contacts;
+pub mod local_notes;
 pub mod paired_devices;
+pub mod pending_messages;
 pub mod settings;

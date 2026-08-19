@@ -17,7 +17,10 @@ use tauri::Manager;
 
 use net::server::AppState;
 use store::identity::IdentityStore;
+use store::local_contacts::LocalContactsStore;
+use store::local_notes::LocalNotesStore;
 use store::paired_devices::PairedDeviceStore;
+use store::pending_messages::PendingMessagesStore;
 use store::settings::SettingsStore;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -74,6 +77,11 @@ pub fn run() {
             commands::create_note,
             commands::update_note,
             commands::delete_note,
+            commands::set_note_pinned,
+            commands::list_local_notes,
+            commands::list_local_contacts,
+            commands::list_pending_messages,
+            commands::get_sync_settings,
             commands::get_settings,
             commands::update_settings,
             commands::get_launch_at_login,
@@ -90,7 +98,18 @@ pub fn run() {
             let identity = IdentityStore::load_or_create(&app_data_dir)?;
             let paired_devices = PairedDeviceStore::load_or_create(&app_data_dir)?;
             let settings = SettingsStore::load_or_create(&app_data_dir)?;
-            let state = Arc::new(AppState::new(identity, paired_devices, settings, app.handle().clone())?);
+            let local_notes = LocalNotesStore::load_or_create(&app_data_dir)?;
+            let local_contacts = LocalContactsStore::load_or_create(&app_data_dir)?;
+            let pending_messages = PendingMessagesStore::load_or_create(&app_data_dir)?;
+            let state = Arc::new(AppState::new(
+                identity,
+                paired_devices,
+                settings,
+                local_notes,
+                local_contacts,
+                pending_messages,
+                app.handle().clone(),
+            )?);
             app.manage(Arc::clone(&state));
 
             notify::request_authorization(app.handle());
