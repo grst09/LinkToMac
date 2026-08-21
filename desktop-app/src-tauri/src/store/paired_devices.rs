@@ -83,7 +83,17 @@ impl PairedDeviceStore {
         pairing_salt: &str,
     ) -> std::io::Result<PairedDevice> {
         if let Some(existing) = self.devices.iter_mut().find(|d| d.id == id) {
+            // A re-pair (QR scanned again for a device we already know) issues a *fresh*
+            // device_token/pairing_salt — the phone always saves whatever the Mac just handed
+            // it in helloAck (see MacConnection.handleHelloAck), so failing to persist that same
+            // pair here leaves the two sides permanently out of sync: every reconnect after the
+            // first would send a token this store no longer recognizes and get rejected in
+            // `process_hello`, with no way to recover short of forgetting and re-pairing again —
+            // which would hit this exact bug again.
             existing.device_name = device_name.to_string();
+            existing.device_token = device_token.to_string();
+            existing.pairing_salt = pairing_salt.to_string();
+            existing.paired_at = chrono_now_iso8601();
             let updated = existing.clone();
             self.save()?;
             return Ok(updated);

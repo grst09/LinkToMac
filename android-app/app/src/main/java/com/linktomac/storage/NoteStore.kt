@@ -52,19 +52,24 @@ class NoteStore(context: Context) {
         return notes.sortedWith(compareByDescending<NoteEntry> { it.isPinned }.thenByDescending { it.updatedAt })
     }
 
-    fun create(title: String, body: String): NoteEntry = synchronized(this) {
+    fun create(title: String, body: String, imageBase64: String? = null): NoteEntry = synchronized(this) {
         val now = System.currentTimeMillis().toDouble()
-        val note = NoteEntry(id = UUID.randomUUID().toString(), title = title, body = body, createdAt = now, updatedAt = now)
+        val note = NoteEntry(
+            id = UUID.randomUUID().toString(), title = title, body = body, createdAt = now, updatedAt = now,
+            imageBase64 = imageBase64
+        )
         writeAllLocked(readAllUnsorted() + note)
         note
     }
 
-    fun update(id: String, title: String, body: String): Boolean = synchronized(this) {
+    fun update(id: String, title: String, body: String, imageBase64: String? = null): Boolean = synchronized(this) {
         val existing = readAllUnsorted()
         if (existing.none { it.id == id }) return@synchronized false
         writeAllLocked(
             existing.map {
-                if (it.id == id) it.copy(title = title, body = body, updatedAt = System.currentTimeMillis().toDouble()) else it
+                if (it.id == id) {
+                    it.copy(title = title, body = body, imageBase64 = imageBase64, updatedAt = System.currentTimeMillis().toDouble())
+                } else it
             }
         )
         true

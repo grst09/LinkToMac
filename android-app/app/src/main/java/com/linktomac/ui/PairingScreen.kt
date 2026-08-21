@@ -1,5 +1,6 @@
 package com.linktomac.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -110,6 +111,12 @@ fun PairingScreen(
     var macName by remember { mutableStateOf(pairedMacName()) }
     var connectionState by remember { mutableStateOf<ConnectionState>(ConnectionState.Idle) }
     var showSyncOptions by remember { mutableStateOf(false) }
+
+    // Otherwise the system Back button falls through to the Activity and closes the app instead
+    // of returning from Sync Options to the main Device screen — same reasoning as NotesScreen's
+    // BackHandler. Only active while the sub-screen is actually showing, so back behaves normally
+    // (exits, same as always) everywhere else on this screen.
+    BackHandler(enabled = showSyncOptions) { showSyncOptions = false }
 
     LaunchedEffect(Unit) {
         onStartService()

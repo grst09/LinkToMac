@@ -5,12 +5,30 @@ use crate::protocol::envelope::{
     NoteCreateResultPayload, NoteDeleteResultPayload, NoteSetPinnedResultPayload,
     NoteUpdateResultPayload, NotesSyncPayload,
 };
+use crate::store::pending_note_mutations::PendingNoteMutation;
 
 /// Full-snapshot replace, newest-edited first — matches `NoteStore.readAll` on the Android side.
+/// A reconnect races this against `dispatch::sync_settings`' replay of any queued pin/delete
+/// (see `store/pending_note_mutations.rs`) — the phone can easily send this stale snapshot
+/// before that replay lands. Re-applying whatever's still queued on top closes that window: the
+/// UI never flashes back to the pre-offline-edit state just because this arrived first.
 pub async fn sync(payload: NotesSyncPayload, state: &std::sync::Arc<AppState>) {
     let mut notes = payload.notes;
+    let pending = state.pending_note_mutations.lock().await.all();
+    for mutation in &pending {
+        match mutation {
+            PendingNoteMutation::SetPinned { id, is_pinned } => {
+                if let Some(note) = notes.iter_mut().find(|n| &n.id == id) {
+                    note.is_pinned = *is_pinned;
+                }
+            }
+            PendingNoteMutation::Delete { id } => {
+                notes.retain(|n| &n.id != id);
+            }
+        }
+    }
     notes.sort_by(|a, b| b.updated_at.total_cmp(&a.updated_at));
-    tracing::info!("notes.sync: {} notes", notes.len());
+    tracing::info!("notes.sync: {} notes ({} pending mutation(s) re-applied)", notes.len(), pending.len());
     *state.notes.lock().await = notes.clone();
     let _ = state.app_handle.emit("notes-updated", notes);
 }

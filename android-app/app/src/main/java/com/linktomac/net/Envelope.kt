@@ -396,7 +396,11 @@ data class NoteEntry(
     val body: String,
     val createdAt: Double, // epoch millis
     val updatedAt: Double, // epoch millis
-    val isPinned: Boolean = false
+    val isPinned: Boolean = false,
+    /** A single cover image, already resized/compressed on whichever side attached it — raw
+     *  base64, no `data:image/...;base64,` prefix. Default `null` so a note synced from a build
+     *  that predates this field decodes fine. */
+    val imageBase64: String? = null
 )
 
 @Serializable
@@ -407,7 +411,8 @@ data class NotesSyncPayload(
 @Serializable
 data class NoteCreatePayload(
     val title: String,
-    val body: String
+    val body: String,
+    val imageBase64: String? = null
 )
 
 @Serializable
@@ -420,7 +425,8 @@ data class NoteCreateResultPayload(
 data class NoteUpdatePayload(
     val id: String,
     val title: String,
-    val body: String
+    val body: String,
+    val imageBase64: String? = null
 )
 
 /** The phone's current per-category sync toggles (`SyncCategory` in AppSettingsStore.kt) —

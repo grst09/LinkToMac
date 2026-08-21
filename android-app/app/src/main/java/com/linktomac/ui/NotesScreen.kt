@@ -1,5 +1,14 @@
 package com.linktomac.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.scaleOut
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -75,44 +84,57 @@ fun NotesScreen(noteStore: NoteStore, onChanged: () -> Unit, onSyncRequested: ()
         notes = noteStore.readAll()
     }
 
-    if (creating || editing != null) {
-        NoteEditor(
-            existing = editing,
-            onCancel = {
-                creating = false
-                editing = null
-            },
-            onSave = { title, body ->
-                val current = editing
-                if (current != null) {
-                    noteStore.update(current.id, title, body)
-                } else {
-                    noteStore.create(title, body)
-                }
-                onChanged()
-                refresh()
-                creating = false
-                editing = null
-            },
-            onDelete = editing?.let { note ->
-                {
-                    noteStore.delete(note.id)
-                    onChanged()
-                    refresh()
+    // Opening/closing a note used to be an instant hard cut between the grid and the editor —
+    // this crossfades with a slight scale, like the note "lifting off" the grid on the way in
+    // and settling back into it on the way out, instead of just snapping between two screens.
+    AnimatedContent(
+        targetState = creating || editing != null,
+        transitionSpec = {
+            val opening = targetState
+            (fadeIn(tween(220)) + scaleIn(initialScale = if (opening) 0.94f else 1.05f, animationSpec = tween(220)))
+                .togetherWith(fadeOut(tween(160)) + scaleOut(targetScale = if (opening) 1.05f else 0.94f, animationSpec = tween(160)))
+                .using(SizeTransform(clip = false))
+        },
+        label = "note-detail-transition"
+    ) { showingEditor ->
+        if (showingEditor) {
+            NoteEditor(
+                existing = editing,
+                onCancel = {
+                    creating = false
                     editing = null
-                }
-            },
-            onTogglePin = editing?.let { note ->
-                {
-                    noteStore.setPinned(note.id, !note.isPinned)
+                },
+                onSave = { title, body ->
+                    val current = editing
+                    if (current != null) {
+                        noteStore.update(current.id, title, body)
+                    } else {
+                        noteStore.create(title, body)
+                    }
                     onChanged()
                     refresh()
-                    editing = notes.find { it.id == note.id }
+                    creating = false
+                    editing = null
+                },
+                onDelete = editing?.let { note ->
+                    {
+                        noteStore.delete(note.id)
+                        onChanged()
+                        refresh()
+                        editing = null
+                    }
+                },
+                onTogglePin = editing?.let { note ->
+                    {
+                        noteStore.setPinned(note.id, !note.isPinned)
+                        onChanged()
+                        refresh()
+                        editing = notes.find { it.id == note.id }
+                    }
                 }
-            }
-        )
-    } else {
-        Box(modifier = Modifier.fillMaxSize()) {
+            )
+        } else {
+            Box(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
@@ -203,6 +225,7 @@ fun NotesScreen(noteStore: NoteStore, onChanged: () -> Unit, onSyncRequested: ()
             ) {
                 Icon(Icons.Filled.Add, contentDescription = "New note")
             }
+            }
         }
     }
 }
@@ -292,13 +315,21 @@ private fun NoteEditor(
     var body by remember { mutableStateOf(existing?.body ?: "") }
     var confirmingDelete by remember { mutableStateOf(false) }
     val canSave = title.isNotBlank() || body.isNotBlank()
+    val goBack = { if (canSave) onSave(title.trim(), body.trim()) else onCancel() }
+
+    // Without this, the system Back button falls straight through to the Activity (nothing else
+    // intercepts it — see MainActivity/NotesScreen, neither uses Navigation's back stack) and
+    // closes the whole app instead of returning to the notes grid. Sharing `goBack` with the
+    // toolbar arrow below keeps this consistent with tapping it: save if there's anything to
+    // save, otherwise just cancel.
+    BackHandler(onBack = goBack)
 
     Column(modifier = Modifier.fillMaxSize()) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            IconButton(onClick = { if (canSave) onSave(title.trim(), body.trim()) else onCancel() }) {
+            IconButton(onClick = goBack) {
                 Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
             }
             Spacer(Modifier.weight(1f))

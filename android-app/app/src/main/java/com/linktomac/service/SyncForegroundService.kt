@@ -24,6 +24,7 @@ import com.linktomac.data.PhotoRepository
 import com.linktomac.data.SmsRepository
 import com.linktomac.net.ConnectionState
 import com.linktomac.net.DeviceStatusPayload
+import com.linktomac.net.DiscoveredMac
 import com.linktomac.net.MacConnection
 import com.linktomac.net.MacDiscovery
 import com.linktomac.net.NotificationPostedPayload
@@ -273,7 +274,7 @@ class SyncForegroundService : Service() {
                     connection.sendNoteCreateResult(false, "Notes sync is off")
                     return@launch
                 }
-                val note = noteStore.create(payload.title, payload.body)
+                val note = noteStore.create(payload.title, payload.body, payload.imageBase64)
                 connection.sendNoteCreateResult(true)
                 connection.sendNotesSync(noteStore.readAll())
                 android.util.Log.d("SyncForegroundService", "notes.create: ${note.id}")
@@ -285,7 +286,7 @@ class SyncForegroundService : Service() {
                     connection.sendNoteUpdateResult(payload.id, false, "Notes sync is off")
                     return@launch
                 }
-                val success = noteStore.update(payload.id, payload.title, payload.body)
+                val success = noteStore.update(payload.id, payload.title, payload.body, payload.imageBase64)
                 connection.sendNoteUpdateResult(payload.id, success, if (success) null else "Couldn't find that note")
                 if (success) connection.sendNotesSync(noteStore.readAll())
             }
@@ -510,9 +511,28 @@ class SyncForegroundService : Service() {
      *  back (e.g. the Mac's own disconnect/reconnect toggle), so restarting discovery outright
      *  is what actually gets a response, both for the background retry path and the explicit
      *  "Reconnect" action. Reconnecting is allowed from Idle or Failed — not just Idle — so a
-     *  previous failed attempt doesn't permanently block further retries. */
+     *  previous failed attempt doesn't permanently block further retries.
+     *
+     *  Also fires off a direct connection attempt to whatever address last worked (see
+     *  [PairedDeviceStore.lastKnownHost]) before mDNS has resolved anything. mDNS discovery relies
+     *  on multicast, which plenty of routers/mesh systems don't bridge reliably across WiFi bands
+     *  — the Mac roaming onto 6GHz while the phone's stuck on 5GHz is enough to make
+     *  [MacDiscovery] never see a response even though both devices can reach each other fine
+     *  over plain unicast IP. The two races harmlessly: `connection.state` flips to `Connecting`
+     *  the moment the direct attempt starts, so the guard below skips anything mDNS resolves
+     *  until that attempt actually finishes (succeeds, or fails and frees the guard back up). */
     private fun startDiscovery() {
         discoveryJob?.cancel()
+
+        val lastHost = pairedDeviceStore.lastKnownHost
+        val lastPort = pairedDeviceStore.lastKnownPort
+        if (lastHost != null && lastPort != 0) {
+            val state = connection.state.value
+            if (state == ConnectionState.Idle || state is ConnectionState.Failed) {
+                connection.connectForReconnect(DiscoveredMac(lastHost, lastPort, pairedDeviceStore.macDeviceId))
+            }
+        }
+
         discoveryJob = scope.launch {
             MacDiscovery(applicationContext).discover().collect { discovered ->
                 val state = connection.state.value

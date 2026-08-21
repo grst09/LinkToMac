@@ -49,6 +49,21 @@ class PairedDeviceStore(context: Context) {
         get() = prefs.getString(KEY_MAC_DEVICE_NAME, null)
         set(value) = prefs.edit().putString(KEY_MAC_DEVICE_NAME, value).apply()
 
+    /** The host/port a connection last actually succeeded on. NSD/Bonjour discovery is how a
+     *  reconnect normally finds the Mac, but mDNS multicast doesn't reliably cross WiFi bands on
+     *  some routers/mesh systems (e.g. the Mac on 6GHz, the phone on 5GHz) even though both
+     *  devices can reach each other fine over plain unicast IP. Remembering the last address
+     *  that worked lets [com.linktomac.service.SyncForegroundService] try connecting there
+     *  directly instead of only waiting on discovery that may never arrive — see
+     *  `startDiscovery()`'s doc comment there. */
+    var lastKnownHost: String?
+        get() = prefs.getString(KEY_LAST_KNOWN_HOST, null)
+        private set(value) = prefs.edit().putString(KEY_LAST_KNOWN_HOST, value).apply()
+
+    var lastKnownPort: Int
+        get() = prefs.getInt(KEY_LAST_KNOWN_PORT, 0)
+        private set(value) = prefs.edit().putInt(KEY_LAST_KNOWN_PORT, value).apply()
+
     val isPaired: Boolean get() = deviceToken != null && pairingSalt != null && macPublicKey != null
 
     fun savePairing(macDeviceId: String, macPublicKey: String, deviceToken: String, pairingSalt: String) {
@@ -56,6 +71,11 @@ class PairedDeviceStore(context: Context) {
         this.macPublicKey = macPublicKey
         this.deviceToken = deviceToken
         this.pairingSalt = pairingSalt
+    }
+
+    fun saveLastKnownAddress(host: String, port: Int) {
+        lastKnownHost = host
+        lastKnownPort = port
     }
 
     fun clear() {
@@ -68,5 +88,7 @@ class PairedDeviceStore(context: Context) {
         const val KEY_DEVICE_TOKEN = "device_token"
         const val KEY_PAIRING_SALT = "pairing_salt"
         const val KEY_MAC_DEVICE_NAME = "mac_device_name"
+        const val KEY_LAST_KNOWN_HOST = "last_known_host"
+        const val KEY_LAST_KNOWN_PORT = "last_known_port"
     }
 }

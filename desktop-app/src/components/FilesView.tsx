@@ -73,6 +73,98 @@ export function FilesView() {
 
   useEffect(() => setSelected(null), [currentPath]);
 
+  const selectedEntry = useMemo(() => entries.find((e) => e.name === selected) ?? null, [entries, selected]);
+
+  // Finder-style shortcuts for the currently-selected item: Enter opens it, Delete/Backspace
+  // removes it (via the same confirm dialog as the context menu), Cmd+C/X/V copy/cut/paste,
+  // Cmd+Shift+N makes a new folder, Cmd+Up goes to the parent folder, arrow keys move the
+  // selection, and Escape backs out of whatever's open (menu, then selection).
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      // Rename/new-folder/delete dialogs handle their own keys (Enter to confirm, Escape to
+      // cancel) — don't let those keystrokes also trigger a file-list shortcut underneath.
+      if (renaming || creatingFolder || deleting) return;
+
+      const target = e.target as HTMLElement | null;
+      const isTyping =
+        !!target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable);
+      if (isTyping) return;
+
+      const meta = e.metaKey || e.ctrlKey;
+
+      if (menu) {
+        if (e.key === "Escape") setMenu(null);
+        return;
+      }
+
+      if (meta && e.key.toLowerCase() === "c") {
+        if (selectedEntry) {
+          e.preventDefault();
+          copyToClipboard(joinPath(currentPath, selectedEntry.name), selectedEntry.name);
+        }
+        return;
+      }
+      if (meta && e.key.toLowerCase() === "x") {
+        if (selectedEntry) {
+          e.preventDefault();
+          cutToClipboard(joinPath(currentPath, selectedEntry.name), selectedEntry.name);
+        }
+        return;
+      }
+      if (meta && e.key.toLowerCase() === "v") {
+        if (clipboard) {
+          e.preventDefault();
+          pasteClipboard();
+        }
+        return;
+      }
+      if (meta && e.shiftKey && e.key.toLowerCase() === "n") {
+        e.preventDefault();
+        setCreatingFolder(true);
+        return;
+      }
+      if (meta && e.key === "ArrowUp") {
+        if (currentPath) {
+          e.preventDefault();
+          listFiles(parentPath(currentPath));
+        }
+        return;
+      }
+      if (e.key === "Enter") {
+        if (selectedEntry) {
+          e.preventDefault();
+          openEntry(selectedEntry);
+        }
+        return;
+      }
+      if (e.key === "Backspace" || e.key === "Delete") {
+        if (selectedEntry) {
+          e.preventDefault();
+          setDeleting(selectedEntry);
+        }
+        return;
+      }
+      if (e.key === "ArrowDown" || e.key === "ArrowRight" || e.key === "ArrowUp" || e.key === "ArrowLeft") {
+        if (entries.length === 0) return;
+        e.preventDefault();
+        const forward = e.key === "ArrowDown" || e.key === "ArrowRight";
+        const currentIndex = selected ? entries.findIndex((entry) => entry.name === selected) : -1;
+        const nextIndex = currentIndex === -1
+          ? (forward ? 0 : entries.length - 1)
+          : Math.min(entries.length - 1, Math.max(0, currentIndex + (forward ? 1 : -1)));
+        setSelected(entries[nextIndex].name);
+        return;
+      }
+      if (e.key === "Escape") {
+        if (selected) setSelected(null);
+        return;
+      }
+    }
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [selected, selectedEntry, entries, currentPath, clipboard, menu, renaming, creatingFolder, deleting]);
+
   const breadcrumbs = useMemo(() => {
     const segments: { name: string; path: string }[] = [{ name: "Device", path: "" }];
     if (currentPath) {
@@ -496,6 +588,15 @@ function TextInputDialog({
   onConfirm: (value: string) => void;
 }) {
   const [value, setValue] = useState(initialValue);
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") onCancel();
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onCancel]);
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onCancel}>
       <motion.div

@@ -13,6 +13,7 @@ import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
 import androidx.activity.result.contract.ActivityResultContracts
@@ -143,6 +144,12 @@ class MainActivity : ComponentActivity() {
             }
             LinkToMacTheme(darkTheme = darkTheme) {
                 var selectedTab by remember { mutableIntStateOf(0) }
+                // Land back on the Device tab before actually exiting — matches standard
+                // bottom-nav back behavior (system back is otherwise unhandled anywhere above
+                // this and just finishes the Activity). Each tab's own sub-screens (the note
+                // editor, sync options, …) register their own BackHandler further down and take
+                // priority automatically — Compose dispatches to the innermost enabled one first.
+                BackHandler(enabled = selectedTab != 0) { selectedTab = 0 }
                 Scaffold(
                     bottomBar = {
                         NavigationBar {

@@ -7,4 +7,5 @@ pub mod local_contacts;
 pub mod local_notes;
 pub mod paired_devices;
 pub mod pending_messages;
+pub mod pending_note_mutations;
 pub mod settings;

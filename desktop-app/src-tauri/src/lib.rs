@@ -21,6 +21,7 @@ use store::local_contacts::LocalContactsStore;
 use store::local_notes::LocalNotesStore;
 use store::paired_devices::PairedDeviceStore;
 use store::pending_messages::PendingMessagesStore;
+use store::pending_note_mutations::PendingNoteMutationsStore;
 use store::settings::SettingsStore;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -101,6 +102,7 @@ pub fn run() {
             let local_notes = LocalNotesStore::load_or_create(&app_data_dir)?;
             let local_contacts = LocalContactsStore::load_or_create(&app_data_dir)?;
             let pending_messages = PendingMessagesStore::load_or_create(&app_data_dir)?;
+            let pending_note_mutations = PendingNoteMutationsStore::load_or_create(&app_data_dir)?;
             let state = Arc::new(AppState::new(
                 identity,
                 paired_devices,
@@ -108,6 +110,7 @@ pub fn run() {
                 local_notes,
                 local_contacts,
                 pending_messages,
+                pending_note_mutations,
                 app.handle().clone(),
             )?);
             app.manage(Arc::clone(&state));

@@ -20,6 +20,8 @@ pub struct PendingNote {
     pub updated_at: f64,
     #[serde(default)]
     pub is_pinned: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_base64: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -54,7 +56,7 @@ impl LocalNotesStore {
         self.data.pending.clone()
     }
 
-    pub fn add(&mut self, title: String, body: String) -> PendingNote {
+    pub fn add(&mut self, title: String, body: String, image_base64: Option<String>) -> PendingNote {
         let now = now_millis();
         let note = PendingNote {
             id: generate_local_id(),
@@ -63,6 +65,7 @@ impl LocalNotesStore {
             created_at: now,
             updated_at: now,
             is_pinned: false,
+            image_base64,
         };
         self.data.pending.push(note.clone());
         let _ = self.save();
@@ -80,12 +83,13 @@ impl LocalNotesStore {
 
     /// `id` must be a locally-generated id (see `generate_local_id`) — the caller is
     /// responsible for routing phone-origin ids elsewhere.
-    pub fn update(&mut self, id: &str, title: String, body: String) -> bool {
+    pub fn update(&mut self, id: &str, title: String, body: String, image_base64: Option<String>) -> bool {
         let Some(note) = self.data.pending.iter_mut().find(|n| n.id == id) else {
             return false;
         };
         note.title = title;
         note.body = body;
+        note.image_base64 = image_base64;
         note.updated_at = now_millis();
         let _ = self.save();
         true

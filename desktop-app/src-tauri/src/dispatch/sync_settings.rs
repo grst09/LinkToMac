@@ -13,8 +13,10 @@ use tauri::Emitter;
 
 use crate::net::server::{send_to_active, AppState};
 use crate::protocol::envelope::{
-    ContactCreatePayload, EmptyPayload, NoteCreatePayload, SmsSendPayload, SyncSettingsPayload,
+    ContactCreatePayload, EmptyPayload, NoteCreatePayload, NoteDeletePayload, NoteSetPinnedPayload,
+    SmsSendPayload, SyncSettingsPayload,
 };
+use crate::store::pending_note_mutations::PendingNoteMutation;
 
 pub async fn update(payload: SyncSettingsPayload, state: &std::sync::Arc<AppState>) {
     let previous = *state.sync_settings.lock().await;
@@ -24,12 +26,49 @@ pub async fn update(payload: SyncSettingsPayload, state: &std::sync::Arc<AppStat
     if !previous.notes_enabled && payload.notes_enabled {
         reconcile_notes(state).await;
     }
+    // Unlike `reconcile_notes` above (which only matters right when the toggle flips on), any
+    // pin/delete queued while disconnected (see `store/pending_note_mutations.rs`) needs
+    // replaying every time the phone reconnects — which is the common case here, since the
+    // toggle is usually already on and this push is just the phone saying hello again (it's
+    // sent right after every reconnect, before anything else — see `SyncForegroundService.kt`).
+    if payload.notes_enabled {
+        reconcile_note_mutations(state).await;
+    }
     if !previous.contacts_enabled && payload.contacts_enabled {
         reconcile_contacts(state).await;
     }
     if !previous.calls_and_messages_enabled && payload.calls_and_messages_enabled {
         reconcile_messages(state).await;
     }
+}
+
+async fn reconcile_note_mutations(state: &std::sync::Arc<AppState>) {
+    let pending = state.pending_note_mutations.lock().await.all();
+    if pending.is_empty() {
+        return;
+    }
+    tracing::info!("device reconnected: replaying {} queued note mutation(s)", pending.len());
+    let mut succeeded = Vec::new();
+    for mutation in pending {
+        let ok = match &mutation {
+            PendingNoteMutation::SetPinned { id, is_pinned } => send_to_active(
+                state,
+                "note.setPinned",
+                &NoteSetPinnedPayload { id: id.clone(), is_pinned: *is_pinned },
+            )
+            .await
+            .is_ok(),
+            PendingNoteMutation::Delete { id } => {
+                send_to_active(state, "notes.delete", &NoteDeletePayload { id: id.clone() })
+                    .await
+                    .is_ok()
+            }
+        };
+        if ok {
+            succeeded.push(mutation);
+        }
+    }
+    state.pending_note_mutations.lock().await.remove(&succeeded);
 }
 
 async fn reconcile_notes(state: &std::sync::Arc<AppState>) {
@@ -42,7 +81,7 @@ async fn reconcile_notes(state: &std::sync::Arc<AppState>) {
         let _ = send_to_active(
             state,
             "notes.create",
-            &NoteCreatePayload { title: note.title, body: note.body },
+            &NoteCreatePayload { title: note.title, body: note.body, image_base64: note.image_base64 },
         )
         .await;
     }

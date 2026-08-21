@@ -31,6 +31,7 @@ use crate::store::local_contacts::LocalContactsStore;
 use crate::store::local_notes::LocalNotesStore;
 use crate::store::paired_devices::PairedDeviceStore;
 use crate::store::pending_messages::PendingMessagesStore;
+use crate::store::pending_note_mutations::PendingNoteMutationsStore;
 
 pub const PORT: u16 = 53821;
 const SERVICE_TYPE: &str = "_linktomac._tcp.local.";
@@ -43,6 +44,12 @@ const SERVICE_TYPE: &str = "_linktomac._tcp.local.";
 struct ActiveConnection {
     sender: tokio::sync::mpsc::UnboundedSender<WsMessage>,
     session_key: [u8; 32],
+    /// Distinguishes this connection from a later one from the *same* device — the phone can
+    /// legitimately open a new connection before this task's cleanup (below) has run for the
+    /// old one (e.g. it closes the old socket itself right as a new one comes up, racing to
+    /// reconnect through a flaky path). Clearing `active_connection` unconditionally at cleanup
+    /// would then wipe out the newer, still-live connection instead of the dead one.
+    id: u64,
 }
 
 pub struct AppState {
@@ -81,6 +88,9 @@ pub struct AppState {
     pub local_notes: Mutex<LocalNotesStore>,
     pub local_contacts: Mutex<LocalContactsStore>,
     pub pending_messages: Mutex<PendingMessagesStore>,
+    pub pending_note_mutations: Mutex<PendingNoteMutationsStore>,
+    /// Source of the `id` each `ActiveConnection` is tagged with — see that struct's doc comment.
+    next_connection_id: std::sync::atomic::AtomicU64,
     pub app_handle: tauri::AppHandle,
     _mdns: ServiceDaemon,
 }
@@ -94,6 +104,7 @@ impl AppState {
         local_notes: LocalNotesStore,
         local_contacts: LocalContactsStore,
         pending_messages: PendingMessagesStore,
+        pending_note_mutations: PendingNoteMutationsStore,
         app_handle: tauri::AppHandle,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mdns = start_mdns(&identity)?;
@@ -119,6 +130,8 @@ impl AppState {
             local_notes: Mutex::new(local_notes),
             local_contacts: Mutex::new(local_contacts),
             pending_messages: Mutex::new(pending_messages),
+            pending_note_mutations: Mutex::new(pending_note_mutations),
+            next_connection_id: std::sync::atomic::AtomicU64::new(0),
             app_handle,
             _mdns: mdns,
         })
@@ -384,10 +397,14 @@ async fn handle_connection(
     );
     *state.active_device_id.lock().await = Some(device_id_for_log.clone());
 
+    let conn_id = state
+        .next_connection_id
+        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     let (outbound_tx, mut outbound_rx) = tokio::sync::mpsc::unbounded_channel::<WsMessage>();
     *state.active_connection.lock().await = Some(ActiveConnection {
         sender: outbound_tx,
         session_key: result.session_key,
+        id: conn_id,
     });
 
     // Step 5: post-handshake loop — decrypt incoming messages and dispatch them (see
@@ -438,7 +455,9 @@ async fn handle_connection(
     }
 
     let mut active_conn = state.active_connection.lock().await;
-    *active_conn = None;
+    if active_conn.as_ref().map(|c| c.id) == Some(conn_id) {
+        *active_conn = None;
+    }
     drop(active_conn);
     let mut active = state.active_device_id.lock().await;
     if active.as_deref() == Some(device_id_for_log.as_str()) {

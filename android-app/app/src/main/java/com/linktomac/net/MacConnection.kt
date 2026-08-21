@@ -33,7 +33,11 @@ private data class PendingHandshake(
     val expectedMacPublicKey: String?,
     val saltBase64: String,
     val pairingTokenToSend: String?,
-    val isNewPairing: Boolean
+    val isNewPairing: Boolean,
+    /** Carried through so a successful handshake can remember the address that worked — see
+     *  [PairedDeviceStore.saveLastKnownAddress]. */
+    val host: String,
+    val port: Int
 )
 
 /**
@@ -53,6 +57,8 @@ class MacConnection(
     // otherwise break decoding on the Mac side.
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
     private val client = OkHttpClient()
+    /** Guards `connect()` end-to-end — see that method's doc comment. */
+    private val connectionLock = Any()
     private var webSocket: WebSocket? = null
     private var sessionKey: SecretKeySpec? = null
     private var ephemeralKeyPair: SecureChannel.KeyPair? = null
@@ -121,6 +127,20 @@ class MacConnection(
         )
     }
 
+    /** A second attempt to connect can now come from more than one place at once — the
+     *  direct-to-last-known-address attempt and a mDNS-resolved one racing each other, the
+     *  service's own startup discovery overlapping a user-initiated "Reconnect", NSD callbacks
+     *  landing on their own threads with no ordering guarantee relative to any of this (see
+     *  `SyncForegroundService.startDiscovery()`). Every caller already checks `state.value`
+     *  before calling in, but that check-then-call is inherently racy across threads — two
+     *  callers can both see `Idle` and both proceed. Letting that happen used to leave two
+     *  sockets alive at once, each mutating the same `sessionKey`/`pending` fields: a plaintext
+     *  serverHello from one socket getting fed through the other's now-encrypted decoder,
+     *  surfacing as a confusing "Fields [nonce, ciphertext] required" decode error.
+     *
+     *  Making this whole method atomic — and having it refuse to start a second attempt while
+     *  one's already in flight — is what actually closes that race; the callers' own checks are
+     *  now just a cheap pre-filter, not the source of truth. */
     private fun connect(
         host: String,
         port: Int,
@@ -129,11 +149,17 @@ class MacConnection(
         saltBase64: String,
         pairingTokenToSend: String?,
         isNewPairing: Boolean
-    ) {
+    ) = synchronized(connectionLock) {
+        if (_state.value == ConnectionState.Connecting || _state.value is ConnectionState.Connected) {
+            return@synchronized
+        }
+
         _state.value = ConnectionState.Connecting
         ephemeralKeyPair = SecureChannel.generateKeyPair()
         sessionKey = null
-        pending = PendingHandshake(expectedMacDeviceId, expectedMacPublicKey, saltBase64, pairingTokenToSend, isNewPairing)
+        pending = PendingHandshake(
+            expectedMacDeviceId, expectedMacPublicKey, saltBase64, pairingTokenToSend, isNewPairing, host, port
+        )
 
         val request = Request.Builder().url("ws://$host:$port/").build()
         webSocket = client.newWebSocket(request, Listener())
@@ -145,14 +171,19 @@ class MacConnection(
             // public key we need before we can derive a session key or send our own hello.
         }
 
-        override fun onMessage(webSocket: WebSocket, text: String) = handleIncoming(text)
-
-        // Both callbacks can arrive asynchronously after this connection has already been
+        // All four callbacks can arrive asynchronously after this connection has already been
         // superseded — by an intentional close() (which nulls out `webSocket` synchronously
         // before the graceful-close handshake actually completes) or by a fresh connect() call
-        // replacing it outright. Comparing against the currently-held `webSocket` discards those
-        // stale callbacks instead of letting them clobber newer state, e.g. turning a deliberate
-        // disconnect into a spuriously displayed "connection failed" error.
+        // replacing it outright (see that method's doc comment). Comparing against the
+        // currently-held `webSocket` discards those stale callbacks instead of letting them
+        // clobber newer state — e.g. turning a deliberate disconnect into a spuriously displayed
+        // "connection failed" error, or (onMessage) decoding a stale socket's plaintext
+        // serverHello against session state a newer connection attempt has since replaced.
+        override fun onMessage(webSocket: WebSocket, text: String) {
+            if (this@MacConnection.webSocket !== webSocket) return
+            handleIncoming(text)
+        }
+
         override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
             if (this@MacConnection.webSocket !== webSocket) return
             Log.e("MacConnection", "WebSocket failure", t)
@@ -347,6 +378,12 @@ class MacConnection(
             )
         }
         pairedDeviceStore.macDeviceName = ack.macDeviceName
+        // Whatever address this handshake actually completed on is worth remembering regardless
+        // of how we got it (QR, mDNS, or an earlier cached address) — see
+        // [PairedDeviceStore.lastKnownHost]'s doc comment.
+        if (ctx != null) {
+            pairedDeviceStore.saveLastKnownAddress(ctx.host, ctx.port)
+        }
         _state.value = ConnectionState.Connected(ack.macDeviceName)
     }
 

@@ -469,6 +469,13 @@ pub struct NoteEntry {
     pub updated_at: f64,
     #[serde(default)]
     pub is_pinned: bool,
+    /// A single cover image, already resized/compressed client-side before it ever reaches here
+    /// — see `NoteEditPanel`'s image handling in the frontend. Data-URI-free base64 (no
+    /// `data:image/jpeg;base64,` prefix); the frontend adds that back for display. `#[serde(default)]`
+    /// so older persisted notes / a phone running an older build that never sends this field
+    /// still decode fine.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_base64: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -477,9 +484,12 @@ pub struct NotesSyncPayload {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NoteCreatePayload {
     pub title: String,
     pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_base64: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -495,6 +505,8 @@ pub struct NoteUpdatePayload {
     pub id: String,
     pub title: String,
     pub body: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_base64: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
