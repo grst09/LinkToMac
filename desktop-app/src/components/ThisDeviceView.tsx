@@ -15,8 +15,10 @@ import {
 } from "lucide-react";
 import QRCode from "qrcode";
 import { SectionHeader } from "./SectionHeader";
+import { StatCard } from "./StatCard";
+import { AnimatedListRow } from "./AnimatedListRow";
 import { sectionMeta } from "../theme/sections";
-import { useConnectionStore, type DeviceStatus } from "../store/connection";
+import { useConnectionStore } from "../store/connection";
 import { requestSection } from "../store/navigation";
 
 interface PairingQrPayload {
@@ -90,7 +92,34 @@ export function ThisDeviceView() {
       <SectionHeader section={sectionMeta("device")} subtitle={deviceName ?? undefined} />
 
       <div className="flex-1 overflow-y-auto p-6">
-        <HeroCard connected={connected} deviceName={deviceName} deviceStatus={deviceStatus} />
+        {connected && (
+          <div className="mb-4 grid grid-cols-3 gap-3">
+            <StatCard
+              icon={deviceStatus?.isCharging ? BatteryCharging : Battery}
+              label="Battery"
+              value={deviceStatus ? `${deviceStatus.batteryPercent}%` : "—"}
+              accent={
+                deviceStatus?.isCharging
+                  ? { text: "text-emerald-500 dark:text-emerald-400", bg: "bg-emerald-500/10 dark:bg-emerald-400/10" }
+                  : { text: "text-neutral-500 dark:text-neutral-400", bg: "bg-black/[0.04] dark:bg-white/[0.06]" }
+              }
+            />
+            <StatCard
+              icon={Wifi}
+              label="Connection"
+              value="Wi-Fi"
+              accent={{ text: "text-blue-500 dark:text-blue-400", bg: "bg-blue-500/10 dark:bg-blue-400/10" }}
+            />
+            <StatCard
+              icon={CheckCircle2}
+              label="Status"
+              value="Paired"
+              accent={{ text: "text-emerald-500 dark:text-emerald-400", bg: "bg-emerald-500/10 dark:bg-emerald-400/10" }}
+            />
+          </div>
+        )}
+
+        <HeroCard connected={connected} deviceName={deviceName} />
 
         <div className="mt-8">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
@@ -119,7 +148,7 @@ export function ThisDeviceView() {
                 initial={{ opacity: 0, scale: 0.95, height: 0 }}
                 animate={{ opacity: 1, scale: 1, height: "auto" }}
                 exit={{ opacity: 0, scale: 0.95, height: 0 }}
-                className="mt-3 inline-flex flex-col items-start gap-3 rounded-xl border border-black/5 dark:border-white/10 p-4"
+                className="mt-3 inline-flex flex-col items-start gap-3 rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 p-4 shadow-soft"
               >
                 <img src={qrDataUrl} alt="Pairing QR code" className="rounded-lg" />
                 <p className="text-xs text-neutral-500 dark:text-neutral-400">
@@ -146,8 +175,8 @@ export function ThisDeviceView() {
           ) : (
             <ul className="space-y-1.5">
               <AnimatePresence>
-                {devices.map((d) => (
-                  <PairedDeviceRow key={d.id} device={d} onForget={() => forget(d.id)} />
+                {devices.map((d, i) => (
+                  <PairedDeviceRow key={d.id} device={d} index={i} onForget={() => forget(d.id)} />
                 ))}
               </AnimatePresence>
             </ul>
@@ -158,23 +187,15 @@ export function ThisDeviceView() {
   );
 }
 
-function HeroCard({
-  connected,
-  deviceName,
-  deviceStatus,
-}: {
-  connected: boolean;
-  deviceName: string | null;
-  deviceStatus: DeviceStatus | null;
-}) {
+function HeroCard({ connected, deviceName }: { connected: boolean; deviceName: string | null }) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 4 }}
       animate={{ opacity: 1, y: 0 }}
-      className={`flex flex-col items-center gap-4 rounded-2xl border p-6 ${
+      className={`flex flex-col items-center gap-4 rounded-2xl border p-6 shadow-soft ${
         connected
-          ? "border-emerald-500/30 bg-emerald-500/[0.03]"
-          : "border-black/5 dark:border-white/10 bg-black/[0.015] dark:bg-white/[0.02]"
+          ? "border-emerald-500/30 bg-emerald-500/[0.03] dark:bg-emerald-500/[0.06]"
+          : "border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900"
       }`}
     >
       <span
@@ -207,39 +228,7 @@ function HeroCard({
         )}
       </div>
 
-      {connected && (
-        <div className="flex w-full gap-2">
-          <StatChip
-            icon={deviceStatus?.isCharging ? BatteryCharging : Battery}
-            iconClassName={deviceStatus?.isCharging ? "text-emerald-500" : "text-neutral-500 dark:text-neutral-400"}
-            value={deviceStatus ? `${deviceStatus.batteryPercent}%` : "—"}
-            label="Battery"
-          />
-          <StatChip icon={Wifi} iconClassName="text-blue-500" value="Wi-Fi" label="Connection" />
-          <StatChip icon={CheckCircle2} iconClassName="text-emerald-500" value="Paired" label="Status" />
-        </div>
-      )}
     </motion.div>
-  );
-}
-
-function StatChip({
-  icon: Icon,
-  iconClassName,
-  value,
-  label,
-}: {
-  icon: LucideIcon;
-  iconClassName: string;
-  value: string;
-  label: string;
-}) {
-  return (
-    <div className="flex flex-1 flex-col items-center gap-1 rounded-xl bg-white/70 dark:bg-white/[0.04] py-3">
-      <Icon className={`h-4 w-4 ${iconClassName}`} />
-      <span className="text-[13px] font-semibold text-neutral-900 dark:text-neutral-100">{value}</span>
-      <span className="text-[10px] text-neutral-400 dark:text-neutral-500">{label}</span>
-    </div>
   );
 }
 
@@ -263,7 +252,7 @@ function QuickActionCard({
   return (
     <button
       onClick={onClick}
-      className="flex flex-col items-center gap-2 rounded-xl border border-black/5 dark:border-white/10 py-5 text-center transition-colors hover:bg-black/[0.02] dark:hover:bg-white/[0.04]"
+      className="flex flex-col items-center gap-2 rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 py-5 text-center shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-soft-hover"
     >
       <span className={`flex h-10 w-10 items-center justify-center rounded-full ${tintClasses}`}>
         <Icon className="h-4.5 w-4.5" />
@@ -274,14 +263,20 @@ function QuickActionCard({
   );
 }
 
-function PairedDeviceRow({ device, onForget }: { device: PairedDeviceSummary; onForget: () => void }) {
+function PairedDeviceRow({
+  device,
+  index,
+  onForget,
+}: {
+  device: PairedDeviceSummary;
+  index: number;
+  onForget: () => void;
+}) {
   return (
-    <motion.li
-      layout
-      initial={{ opacity: 0, y: -4 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, x: -8 }}
-      className="flex items-center gap-3 rounded-xl border border-black/5 dark:border-white/10 px-3 py-2.5"
+    <AnimatedListRow
+      index={index}
+      transition={{ duration: 0.18, ease: "easeOut" }}
+      className="flex items-center gap-3 rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 px-3 py-2.5 shadow-soft"
     >
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-black/[0.04] dark:bg-white/[0.06]">
         <Smartphone className="h-4 w-4 text-neutral-400" strokeWidth={1.75} />
@@ -306,6 +301,6 @@ function PairedDeviceRow({ device, onForget }: { device: PairedDeviceSummary; on
         <X className="h-4 w-4" />
       </button>
       <ChevronRight className="h-4 w-4 text-neutral-300 dark:text-neutral-600" />
-    </motion.li>
+    </AnimatedListRow>
   );
 }

@@ -25,8 +25,11 @@ pub async fn refresh_notes(state: tauri::State<'_, Arc<AppState>>) -> Result<(),
         .map_err(|e| e.to_string())
 }
 
-/// While notes sync is off, a new note stays entirely local (see `store/local_notes.rs`) instead
-/// of being sent to the phone — it gets pushed for real once sync is re-enabled.
+/// While notes sync is off, or the phone just isn't reachable right now, a new note stays
+/// entirely local (see `store/local_notes.rs`) instead of being sent to the phone — it gets
+/// pushed for real (as a fresh `notes.create`) the next time the phone says hello, via
+/// `dispatch::sync_settings::reconcile_notes`. Note creation never fails to the frontend for a
+/// connectivity reason — worst case it just stays local a little longer.
 #[tauri::command]
 pub async fn create_note(
     state: tauri::State<'_, Arc<AppState>>,
@@ -35,23 +38,33 @@ pub async fn create_note(
     image_base64: Option<String>,
 ) -> Result<(), String> {
     let notes_enabled = state.sync_settings.lock().await.notes_enabled;
-    if !notes_enabled {
-        let mut store = state.local_notes.lock().await;
-        store.add(title, body, image_base64);
-        let pending = store.pending();
-        drop(store);
-        let _ = state.app_handle.emit("local-notes-updated", pending);
-        return Ok(());
-    }
-    send_to_active(&state, "notes.create", &NoteCreatePayload { title, body, image_base64 })
+    if notes_enabled {
+        let sent = send_to_active(
+            &state,
+            "notes.create",
+            &NoteCreatePayload { title: title.clone(), body: body.clone(), image_base64: image_base64.clone() },
+        )
         .await
-        .map_err(|e| e.to_string())
+        .is_ok();
+        if sent {
+            return Ok(());
+        }
+    }
+    let mut store = state.local_notes.lock().await;
+    store.add(title, body, image_base64);
+    let pending = store.pending();
+    drop(store);
+    let _ = state.app_handle.emit("local-notes-updated", pending);
+    Ok(())
 }
 
 /// `id` starting with `"local-"` means the note only ever existed on the Mac (never sent to the
 /// phone) — those can always be edited/deleted locally regardless of the sync toggle, since
 /// there's no phone-side copy to conflict with. Any other id is phone-origin: editing it requires
-/// sync to be on (no offline-merge story for mutating a record we don't have live access to).
+/// sync to be *on* (no offline-merge story for mutating a record we don't have live access to at
+/// all), but — like `delete_note`/`set_note_pinned` — doesn't need an active *connection*: it's
+/// applied to the in-memory snapshot right away and, if the phone isn't reachable, queued in
+/// `pending_note_mutations` for `dispatch::sync_settings::reconcile_note_mutations` to replay.
 #[tauri::command]
 pub async fn update_note(
     state: tauri::State<'_, Arc<AppState>>,
@@ -71,9 +84,32 @@ pub async fn update_note(
     if !state.sync_settings.lock().await.notes_enabled {
         return Err("Notes sync is off — turn it back on to edit synced notes".to_string());
     }
-    send_to_active(&state, "notes.update", &NoteUpdatePayload { id, title, body, image_base64 })
-        .await
-        .map_err(|e| e.to_string())
+
+    {
+        let mut notes = state.notes.lock().await;
+        if let Some(note) = notes.iter_mut().find(|n| n.id == id) {
+            note.title = title.clone();
+            note.body = body.clone();
+            note.image_base64 = image_base64.clone();
+        }
+        let _ = state.app_handle.emit("notes-updated", notes.clone());
+    }
+
+    if send_to_active(
+        &state,
+        "notes.update",
+        &NoteUpdatePayload { id: id.clone(), title: title.clone(), body: body.clone(), image_base64: image_base64.clone() },
+    )
+    .await
+    .is_err()
+    {
+        state
+            .pending_note_mutations
+            .lock()
+            .await
+            .queue_update(id, title, body, image_base64);
+    }
+    Ok(())
 }
 
 /// Unlike `update_note`, a phone-origin delete doesn't need a live connection: it's applied to

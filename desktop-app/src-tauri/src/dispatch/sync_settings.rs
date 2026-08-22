@@ -14,7 +14,7 @@ use tauri::Emitter;
 use crate::net::server::{send_to_active, AppState};
 use crate::protocol::envelope::{
     ContactCreatePayload, EmptyPayload, NoteCreatePayload, NoteDeletePayload, NoteSetPinnedPayload,
-    SmsSendPayload, SyncSettingsPayload,
+    NoteUpdatePayload, SmsSendPayload, SyncSettingsPayload,
 };
 use crate::store::pending_note_mutations::PendingNoteMutation;
 
@@ -51,17 +51,37 @@ async fn reconcile_note_mutations(state: &std::sync::Arc<AppState>) {
     let mut succeeded = Vec::new();
     for mutation in pending {
         let ok = match &mutation {
-            PendingNoteMutation::SetPinned { id, is_pinned } => send_to_active(
-                state,
-                "note.setPinned",
-                &NoteSetPinnedPayload { id: id.clone(), is_pinned: *is_pinned },
-            )
-            .await
-            .is_ok(),
             PendingNoteMutation::Delete { id } => {
                 send_to_active(state, "notes.delete", &NoteDeletePayload { id: id.clone() })
                     .await
                     .is_ok()
+            }
+            PendingNoteMutation::Change { id, set_pinned, content } => {
+                let mut ok = true;
+                if let Some(is_pinned) = set_pinned {
+                    ok &= send_to_active(
+                        state,
+                        "note.setPinned",
+                        &NoteSetPinnedPayload { id: id.clone(), is_pinned: *is_pinned },
+                    )
+                    .await
+                    .is_ok();
+                }
+                if let Some(c) = content {
+                    ok &= send_to_active(
+                        state,
+                        "notes.update",
+                        &NoteUpdatePayload {
+                            id: id.clone(),
+                            title: c.title.clone(),
+                            body: c.body.clone(),
+                            image_base64: c.image_base64.clone(),
+                        },
+                    )
+                    .await
+                    .is_ok();
+                }
+                ok
             }
         };
         if ok {

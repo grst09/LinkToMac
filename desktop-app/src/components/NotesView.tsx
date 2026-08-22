@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import {
   Plus,
@@ -34,23 +34,20 @@ import {
   type PendingNote,
 } from "../store/notes";
 import { useSyncSettingsStore } from "../store/syncSettings";
-import { useConnectionStore } from "../store/connection";
 
 type NoteRowItem = (Note | PendingNote) & { pending: boolean };
 
 /** A locally-created note (`isPendingNote`) never leaves the Mac, so it's always editable. For a
- *  phone-origin note, pinning and deleting work even with no active connection — the Rust side
- *  (see `commands/notes.rs`) applies them locally right away and queues them for the phone the
- *  moment it's reachable again, which is safe because both are blind-replayable (a pin toggle
- *  only ever has two states, and a delete stays a delete). Editing title/body isn't — there's no
- *  merge story for overwriting content against a phone copy that may have changed in the
- *  meantime — so that still needs a live connection. */
-function canPinOrDelete(note: NoteRowItem, notesEnabled: boolean): boolean {
+ *  phone-origin note, every mutation — pin, delete, and now title/body edits too — works even
+ *  with no active connection: the Rust side (see `commands/notes.rs`) applies it locally right
+ *  away and queues it for the phone the moment it's reachable again (`pending_note_mutations.rs`).
+ *  All three are safe to replay blind: a pin toggle only ever has two states, a delete stays a
+ *  delete, and a content edit is just the Mac's own last-written value winning outright — the
+ *  right call for a personal single-user notes app with no live merge story. The only thing that
+ *  still gates editing is the Notes *sync toggle* itself being off for a phone-origin note (a
+ *  deliberate setting, not a connectivity blip). */
+function canEdit(note: NoteRowItem, notesEnabled: boolean): boolean {
   return isPendingNote(note.id) || notesEnabled;
-}
-
-function canEditText(note: NoteRowItem, notesEnabled: boolean, deviceConnected: boolean): boolean {
-  return isPendingNote(note.id) || (notesEnabled && deviceConnected);
 }
 
 const AUTOSAVE_DELAY_MS = 600;
@@ -109,19 +106,94 @@ function compressImageFile(file: File): Promise<string> {
   });
 }
 
+/** Images live inline in the body as standard markdown image tokens (`![](data:...)`) instead of
+ *  a separate field — see `NoteEditPanel` for why (a plain `<textarea>` can't render a picture
+ *  inline, so the body gets parsed into alternating text/image "blocks" for editing and
+ *  re-serialized back into one string, image tokens included, on every autosave). This keeps the
+ *  wire format (`body: String`, unchanged on both Rust and Kotlin) and the offline-edit queue
+ *  (`store/pending_note_mutations.rs`) completely unaware images exist at all. */
+const IMAGE_TOKEN_RE = /!\[\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)\)/g;
+const IMAGE_TOKEN_RE_ONCE = /!\[\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)\)/;
+
+interface TextBlock {
+  type: "text";
+  id: string;
+  text: string;
+}
+interface ImageBlock {
+  type: "image";
+  id: string;
+  dataUrl: string;
+}
+type NoteBlock = TextBlock | ImageBlock;
+
+let blockIdCounter = 0;
+function newBlockId(): string {
+  blockIdCounter += 1;
+  return `blk${blockIdCounter}`;
+}
+
+function parseBlocks(body: string): NoteBlock[] {
+  const blocks: NoteBlock[] = [];
+  let lastIndex = 0;
+  for (const match of body.matchAll(IMAGE_TOKEN_RE)) {
+    const idx = match.index ?? 0;
+    if (idx > lastIndex) blocks.push({ type: "text", id: newBlockId(), text: body.slice(lastIndex, idx) });
+    blocks.push({ type: "image", id: newBlockId(), dataUrl: match[1] });
+    lastIndex = idx + match[0].length;
+  }
+  if (lastIndex < body.length || blocks.length === 0) {
+    blocks.push({ type: "text", id: newBlockId(), text: body.slice(lastIndex) });
+  }
+  return normalizeBlocks(blocks);
+}
+
+/** Merges adjacent text blocks (e.g. after an image is removed) and guarantees there's always at
+ *  least one text block to type into, even in a note that's entirely images. */
+function normalizeBlocks(blocks: NoteBlock[]): NoteBlock[] {
+  const merged: NoteBlock[] = [];
+  for (const block of blocks) {
+    const prev = merged[merged.length - 1];
+    if (block.type === "text" && prev?.type === "text") {
+      prev.text += block.text;
+    } else {
+      merged.push({ ...block });
+    }
+  }
+  if (merged.length === 0 || merged[merged.length - 1].type === "image") {
+    merged.push({ type: "text", id: newBlockId(), text: "" });
+  }
+  return merged;
+}
+
+function serializeBlocks(blocks: NoteBlock[]): string {
+  return blocks.map((b) => (b.type === "text" ? b.text : `![](${b.dataUrl})`)).join("");
+}
+
+/** A legacy note's single cover image (this session's previous feature, now replaced by inline
+ *  images) shows up as a leading inline image the first time the note is opened — the very next
+ *  autosave folds it into `body` as a token and the field stops being written, so this only ever
+ *  matters for notes that predate inline images. */
+function initialBlocksFor(body: string, legacyImage: string | null): NoteBlock[] {
+  const blocks = parseBlocks(body);
+  if (!legacyImage) return blocks;
+  return normalizeBlocks([{ type: "image", id: newBlockId(), dataUrl: imageSrc(legacyImage) }, ...blocks]);
+}
+
 interface PreviewLine {
   text: string;
   /** `undefined` = a plain text line; `true`/`false` = a checklist item and whether it's done. */
   checked?: boolean;
 }
 
-/** Recognizes `- [ ] task` / `- [x] task` markdown-style checklist lines for the card preview —
- *  the editor itself stays plain text (see `NoteEditPanel`), this is purely a nicer-looking
- *  read view over whatever the user typed. */
+/** Recognizes `- [ ] task` / `- [x] task` markdown-style checklist lines, and strips inline image
+ *  tokens out of the displayed text — for the card preview only; the editor itself renders images
+ *  as real inline thumbnails (see `NoteEditPanel`). */
 function parsePreviewLines(body: string, maxLines: number): PreviewLine[] {
   const checklistPattern = /^-\s*\[([ xX])\]\s*(.*)$/;
+  const withoutImages = body.replace(IMAGE_TOKEN_RE, "").trim();
   const lines: PreviewLine[] = [];
-  for (const raw of body.split("\n")) {
+  for (const raw of withoutImages.split("\n")) {
     const line = raw.trim();
     if (!line) continue;
     if (lines.length >= maxLines) break;
@@ -135,18 +207,32 @@ function parsePreviewLines(body: string, maxLines: number): PreviewLine[] {
   return lines;
 }
 
+/** The card grid's cover thumbnail: the first inline image found anywhere in the body, falling
+ *  back to a legacy note's `imageBase64` field if it hasn't been opened (and thus migrated to an
+ *  inline token) yet. */
+function extractCoverImage(body: string, legacyImage: string | null | undefined): string | null {
+  const match = IMAGE_TOKEN_RE_ONCE.exec(body);
+  if (match) return match[1];
+  return legacyImage ? imageSrc(legacyImage) : null;
+}
+
+/** A match's position is local to the single text block it was found in — image blocks aren't
+ *  searchable, and a query never matches across a block boundary (a picture splitting one search
+ *  across two blocks is treated as two separate non-matches, which is the right call: there's no
+ *  sensible way to "replace" text that has an image in the middle of it). */
 interface Match {
+  blockId: string;
   start: number;
   end: number;
 }
 
 /** Plain case-insensitive substring search, non-overlapping — good enough for find/replace in a
  *  note body and avoids ever building a RegExp out of user-typed (unescaped) text. */
-function findMatches(text: string, query: string): Match[] {
+function findMatchesInText(text: string, query: string): { start: number; end: number }[] {
   if (!query) return [];
   const haystack = text.toLowerCase();
   const needle = query.toLowerCase();
-  const matches: Match[] = [];
+  const matches: { start: number; end: number }[] = [];
   let from = 0;
   while (from <= haystack.length - needle.length) {
     const idx = haystack.indexOf(needle, from);
@@ -157,10 +243,21 @@ function findMatches(text: string, query: string): Match[] {
   return matches;
 }
 
+function findMatches(blocks: NoteBlock[], query: string): Match[] {
+  if (!query) return [];
+  const matches: Match[] = [];
+  for (const block of blocks) {
+    if (block.type !== "text") continue;
+    for (const m of findMatchesInText(block.text, query)) {
+      matches.push({ blockId: block.id, ...m });
+    }
+  }
+  return matches;
+}
+
 export function NotesView() {
   const { notes, pending, loaded, lastError } = useNotesStore();
   const notesEnabled = useSyncSettingsStore((s) => s.settings.notesEnabled);
-  const deviceConnected = useConnectionStore((s) => s.status === "connected");
   const [searchText, setSearchText] = useState("");
   const [listWidth, setListWidth] = useState(320);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -247,18 +344,12 @@ export function NotesView() {
         }
       />
 
-      {!notesEnabled ? (
+      {!notesEnabled && (
         <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-orange-500/10 px-3 py-2 text-xs text-orange-700 dark:text-orange-400">
           <CloudOff className="h-3.5 w-3.5 shrink-0" />
           Notes sync is off — new notes stay on this Mac and sync to your phone once it's back on.
         </div>
-      ) : !deviceConnected ? (
-        <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-orange-500/10 px-3 py-2 text-xs text-orange-700 dark:text-orange-400">
-          <CloudOff className="h-3.5 w-3.5 shrink-0" />
-          No device connected — you can still pin or delete notes synced from your phone, but
-          editing their title or body needs a connection.
-        </div>
-      ) : null}
+      )}
 
       {lastError && (
         <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-orange-500/10 px-3 py-2 text-xs text-orange-700 dark:text-orange-400">
@@ -286,7 +377,7 @@ export function NotesView() {
                         key={note.id}
                         note={note}
                         selected={note.id === selectedId}
-                        canEdit={canPinOrDelete(note, notesEnabled)}
+                        canEdit={canEdit(note, notesEnabled)}
                         onClick={() => selectNote(note.id)}
                         onDelete={() => handleDeleteNote(note.id)}
                       />
@@ -300,7 +391,7 @@ export function NotesView() {
 
         <ResizableDivider width={listWidth} onWidthChange={setListWidth} minWidth={260} maxWidth={620} />
 
-        <div className="m-3 flex-1 overflow-hidden rounded-2xl bg-black/[0.015] dark:bg-white/[0.02]">
+        <div className="m-3 flex-1 overflow-hidden rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 shadow-soft">
           {isCreating ? (
             <NoteEditPanel
               key={sessionKey}
@@ -322,7 +413,7 @@ export function NotesView() {
               initialBody={selected.body}
               initialImage={selected.imageBase64 ?? null}
               pending={selected.pending}
-              canEdit={canEditText(selected, notesEnabled, deviceConnected)}
+              canEdit={canEdit(selected, notesEnabled)}
               updatedAt={selected.updatedAt}
             />
           ) : (
@@ -349,6 +440,7 @@ function NoteCard({
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const previewLines = useMemo(() => parsePreviewLines(note.body, 4), [note.body]);
+  const coverImage = useMemo(() => extractCoverImage(note.body, note.imageBase64), [note.body, note.imageBase64]);
 
   return (
     <div className="mb-3 break-inside-avoid">
@@ -359,15 +451,13 @@ function NoteCard({
         onKeyDown={(e) => {
           if (e.key === "Enter") onClick();
         }}
-        className={`group relative flex w-full flex-col overflow-hidden rounded-2xl border text-left transition-colors ${
+        className={`group relative flex w-full flex-col overflow-hidden rounded-2xl border text-left shadow-soft transition-all hover:-translate-y-0.5 hover:shadow-soft-hover ${
           selected
             ? "border-yellow-500/50 bg-yellow-500/[0.06] ring-1 ring-yellow-500/40"
-            : "border-black/5 dark:border-white/10 bg-black/[0.015] dark:bg-white/[0.035] hover:bg-black/[0.03] dark:hover:bg-white/[0.06]"
+            : "border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 hover:bg-black/[0.015] dark:hover:bg-white/[0.03]"
         }`}
       >
-        {note.imageBase64 && (
-          <img src={imageSrc(note.imageBase64)} alt="" className="h-28 w-full shrink-0 object-cover" />
-        )}
+        {coverImage && <img src={coverImage} alt="" className="h-28 w-full shrink-0 object-cover" />}
 
         {canEdit && (
           <div className="absolute right-1.5 top-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
@@ -464,7 +554,15 @@ function NoteCard({
 
 /** Always-editable note panel: typing autosaves after a short pause, no explicit Save step.
  *  For a brand-new note (`isDraft`), the first non-empty edit creates it; further edits made
- *  before the real id comes back are flushed once `noteId` arrives (see the effect below). */
+ *  before the real id comes back are flushed once `noteId` arrives (see the effect below).
+ *
+ *  The body is edited as a sequence of "blocks" — text runs and inline images — rather than one
+ *  plain string, since a `<textarea>` can't render a picture inline. Each text block is its own
+ *  auto-growing textarea (see `NoteTextBlock`); images sit between them as real `<img>` elements.
+ *  Inserting an image (via the toolbar button, a paste, or a drop) splits whichever text block
+ *  currently has focus at its caret and splices the image in between the two halves. On every
+ *  autosave the blocks are re-joined into one string (images re-emitted as `![](data:...)`
+ *  tokens — see `serializeBlocks`/`parseBlocks` above). */
 function NoteEditPanel({
   noteId,
   isDraft,
@@ -485,38 +583,92 @@ function NoteEditPanel({
   updatedAt: number | null;
 }) {
   const [title, setTitle] = useState(initialTitle);
-  const [body, setBody] = useState(initialBody);
-  const [image, setImage] = useState<string | null>(initialImage);
+  const [blocks, setBlocks] = useState<NoteBlock[]>(() => initialBlocksFor(initialBody, initialImage));
   const [imageDragOver, setImageDragOver] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [pendingFocusBlockId, setPendingFocusBlockId] = useState<string | null>(null);
+
+  const blockRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
+  const lastFocusedBlockIdRef = useRef<string | null>(null);
 
   const dirtyRef = useRef(false);
   const createdRef = useRef(false);
-  const latestRef = useRef({ title, body, image, isDraft, noteId });
-  latestRef.current = { title, body, image, isDraft, noteId };
+  const latestRef = useRef({ title, blocks, isDraft, noteId });
+  latestRef.current = { title, blocks, isDraft, noteId };
 
   function flush() {
-    const { title, body, image, isDraft, noteId } = latestRef.current;
+    const { title, blocks, isDraft, noteId } = latestRef.current;
     const t = title.trim();
-    const b = body.trim();
-    if (!t && !b && !image) return;
+    const b = serializeBlocks(blocks).trim();
+    if (!t && !b) return;
     if (isDraft) {
       if (!createdRef.current) {
         // Set before the call resolves so a second flush (e.g. the unmount-time one) can't fire
         // a duplicate create while this one's in flight; reset on failure so the next autosave
         // tick retries instead of the draft being silently stuck forever.
         createdRef.current = true;
-        createNote(t, b, image).then((ok) => {
+        createNote(t, b, null).then((ok) => {
           if (!ok) createdRef.current = false;
         });
       }
     } else if (noteId) {
-      updateNote(noteId, t, b, image);
+      updateNote(noteId, t, b, null);
     }
   }
 
-  async function handleImageFile(file: File | null | undefined) {
+  /** Splits the target block's text at its current caret and splices a new image block between
+   *  the two halves, focusing the new trailing half. `blockId` is the block to target (the one
+   *  a paste happened in, or the last-focused one for a toolbar-button/drop insert) — falls back
+   *  to the end of the last text block if it isn't a real, current text block (e.g. nothing's
+   *  been focused yet in a brand-new note). */
+  function insertImageAt(dataUrl: string, blockId: string | null) {
+    // Reads `blocks` directly from this render's closure rather than via a functional `setBlocks`
+    // updater — deliberately, since calling `setPendingFocusBlockId` as a side effect from inside
+    // an updater would violate React's purity contract for updaters (they can run more than once
+    // per commit). A plain closure read is safe here: this only ever fires once per discrete user
+    // action (a paste, a drop, a button click), so there's no risk of it seeing stale state.
+    let targetIdx = blockId ? blocks.findIndex((b) => b.id === blockId && b.type === "text") : -1;
+    if (targetIdx < 0) {
+      for (let i = blocks.length - 1; i >= 0; i--) {
+        if (blocks[i].type === "text") {
+          targetIdx = i;
+          break;
+        }
+      }
+    }
+    if (targetIdx < 0) return; // unreachable — normalizeBlocks guarantees a trailing text block
+    const target = blocks[targetIdx] as TextBlock;
+    const el = blockId ? blockRefs.current[blockId] : null;
+    const caret = el && target.id === blockId ? (el.selectionStart ?? target.text.length) : target.text.length;
+    const before = target.text.slice(0, caret);
+    const after = target.text.slice(caret);
+    const afterBlock: TextBlock = { type: "text", id: newBlockId(), text: after };
+    const next: NoteBlock[] = [
+      ...blocks.slice(0, targetIdx),
+      { ...target, text: before },
+      { type: "image", id: newBlockId(), dataUrl },
+      afterBlock,
+      ...blocks.slice(targetIdx + 1),
+    ];
+    setBlocks(normalizeBlocks(next));
+    setPendingFocusBlockId(afterBlock.id);
+    dirtyRef.current = true;
+  }
+
+  // Focus + place the caret at the start of the freshly-inserted trailing text block, once it's
+  // actually mounted (normalizeBlocks can merge it into a neighbor, so it may not exist by id —
+  // in that case there's simply nothing to focus and the next render's ref lookup no-ops).
+  useEffect(() => {
+    if (!pendingFocusBlockId) return;
+    const el = blockRefs.current[pendingFocusBlockId];
+    if (el) {
+      el.focus();
+      el.setSelectionRange(0, 0);
+    }
+    setPendingFocusBlockId(null);
+  }, [pendingFocusBlockId, blocks]);
+
+  async function insertImageFile(file: File | null | undefined, blockId: string | null) {
     if (!file) return;
     if (!file.type.startsWith("image/")) {
       setImageError("That's not an image file");
@@ -525,25 +677,36 @@ function NoteEditPanel({
     }
     try {
       const base64 = await compressImageFile(file);
-      setImage(base64);
-      dirtyRef.current = true;
+      insertImageAt(imageSrc(base64), blockId);
     } catch {
       setImageError("Couldn't read that image");
       setTimeout(() => setImageError(null), 3000);
     }
   }
 
+  function updateTextBlock(blockId: string, text: string) {
+    setBlocks((prev) => prev.map((b) => (b.id === blockId && b.type === "text" ? { ...b, text } : b)));
+    dirtyRef.current = true;
+  }
+
+  function removeImageBlock(blockId: string) {
+    setBlocks((prev) => normalizeBlocks(prev.filter((b) => b.id !== blockId)));
+    dirtyRef.current = true;
+  }
+
   useEffect(() => {
     if (!dirtyRef.current) return;
     const timer = setTimeout(flush, AUTOSAVE_DELAY_MS);
     return () => clearTimeout(timer);
-  }, [title, body, image, isDraft, noteId]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [title, blocks, isDraft, noteId]);
 
   // Flush on unmount too, so switching notes right after typing doesn't drop the last edit.
   useEffect(() => {
     return () => {
       if (dirtyRef.current) flush();
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // --- Find & replace, scoped to this note's body -------------------------------------------
@@ -553,12 +716,11 @@ function NoteEditPanel({
   const [matchIndex, setMatchIndex] = useState(0);
 
   const findInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
   const activeMarkRef = useRef<HTMLElement>(null);
 
-  const matches = useMemo(() => findMatches(body, findQuery), [body, findQuery]);
+  const matches = useMemo(() => findMatches(blocks, findQuery), [blocks, findQuery]);
   const showHighlights = findOpen && matches.length > 0;
+  const activeMatch = matches[matchIndex];
 
   useEffect(() => setMatchIndex(0), [findQuery]);
   useEffect(() => {
@@ -571,16 +733,12 @@ function NoteEditPanel({
     findInputRef.current?.select();
   }, [findOpen]);
 
-  // Keep the active match centered — via the overlay's own layout, not the textarea's focus/
-  // selection, so paging through matches never steals focus away from the find field.
+  // Keep the active match in view. Each text block now auto-grows to fit its own content instead
+  // of scrolling internally — the panel itself is the one scroll container — so a plain
+  // scrollIntoView on the active <mark> replaces the old manual offsetTop math that used to sync
+  // one shared textarea's scroll position against its overlay.
   useEffect(() => {
-    const mark = activeMarkRef.current;
-    const overlay = overlayRef.current;
-    const textarea = textareaRef.current;
-    if (!mark || !overlay || !textarea) return;
-    const target = Math.max(0, mark.offsetTop - overlay.clientHeight / 2 + mark.clientHeight / 2);
-    overlay.scrollTop = target;
-    textarea.scrollTop = target;
+    activeMarkRef.current?.scrollIntoView({ block: "center" });
   }, [matchIndex, matches, showHighlights]);
 
   useEffect(() => {
@@ -618,20 +776,39 @@ function NoteEditPanel({
   function replaceCurrent() {
     if (!canEdit || matches.length === 0) return;
     const m = matches[matchIndex];
-    setBody(body.slice(0, m.start) + replaceQuery + body.slice(m.end));
+    setBlocks((prev) =>
+      prev.map((b) =>
+        b.type === "text" && b.id === m.blockId
+          ? { ...b, text: b.text.slice(0, m.start) + replaceQuery + b.text.slice(m.end) }
+          : b,
+      ),
+    );
     dirtyRef.current = true;
   }
 
   function replaceAll() {
     if (!canEdit || matches.length === 0) return;
-    let result = "";
-    let cursor = 0;
+    const byBlock = new Map<string, Match[]>();
     for (const m of matches) {
-      result += body.slice(cursor, m.start) + replaceQuery;
-      cursor = m.end;
+      const list = byBlock.get(m.blockId);
+      if (list) list.push(m);
+      else byBlock.set(m.blockId, [m]);
     }
-    result += body.slice(cursor);
-    setBody(result);
+    setBlocks((prev) =>
+      prev.map((b) => {
+        if (b.type !== "text") return b;
+        const blockMatches = byBlock.get(b.id);
+        if (!blockMatches) return b;
+        let result = "";
+        let cursor = 0;
+        for (const m of blockMatches) {
+          result += b.text.slice(cursor, m.start) + replaceQuery;
+          cursor = m.end;
+        }
+        result += b.text.slice(cursor);
+        return { ...b, text: result };
+      }),
+    );
     dirtyRef.current = true;
     setMatchIndex(0);
   }
@@ -651,43 +828,12 @@ function NoteEditPanel({
         onDrop={(e) => {
           e.preventDefault();
           setImageDragOver(false);
-          if (canEdit) handleImageFile(e.dataTransfer.files?.[0]);
+          if (canEdit) insertImageFile(e.dataTransfer.files?.[0], lastFocusedBlockIdRef.current);
         }}
         className={`relative flex flex-1 flex-col gap-3 px-6 pb-6 pt-8 ${
           imageDragOver ? "ring-2 ring-inset ring-yellow-500/50" : ""
         }`}
       >
-        <input
-          ref={fileInputRef}
-          type="file"
-          accept="image/*"
-          className="hidden"
-          onChange={(e) => {
-            handleImageFile(e.target.files?.[0]);
-            e.target.value = "";
-          }}
-        />
-
-        {image && (
-          <div className="group/image -mx-6 -mt-8 mb-1 shrink-0 overflow-hidden">
-            <div className="relative">
-              <img src={imageSrc(image)} alt="" className="max-h-64 w-full object-cover" />
-              {canEdit && (
-                <button
-                  onClick={() => {
-                    setImage(null);
-                    dirtyRef.current = true;
-                  }}
-                  title="Remove image"
-                  className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity hover:bg-black/70 group-hover/image:opacity-100"
-                >
-                  <X className="h-4 w-4" />
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
         {pending && (
           <p className="flex items-center gap-1.5 text-xs text-orange-600 dark:text-orange-400">
             <CloudOff className="h-3 w-3 shrink-0" />
@@ -702,14 +848,8 @@ function NoteEditPanel({
             {updatedAt != null ? `Last edited ${relativeTime(updatedAt)}` : ""}
           </p>
           <div className="flex items-center gap-0.5">
-            {canEdit && !image && (
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                title="Add image"
-                className="rounded-md p-1 text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-              >
-                <ImagePlus className="h-3.5 w-3.5" />
-              </button>
+            {canEdit && (
+              <ImagePicker onPick={(file) => insertImageFile(file, lastFocusedBlockIdRef.current)} />
             )}
             <button
               onClick={() => setFindOpen(true)}
@@ -733,43 +873,41 @@ function NoteEditPanel({
           className="w-full bg-transparent text-xl font-bold text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none disabled:opacity-60"
         />
 
-        <div className="relative flex-1">
-          {showHighlights && (
-            <div
-              ref={overlayRef}
-              aria-hidden
-              className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words p-0 text-[14px] leading-relaxed text-neutral-800 dark:text-neutral-200"
-            >
-              {renderHighlighted(body, matches, matchIndex, activeMarkRef)}
-            </div>
+        <div className="flex flex-1 flex-col gap-2">
+          {blocks.map((block) =>
+            block.type === "image" ? (
+              <div key={block.id} className="group/image relative shrink-0 overflow-hidden rounded-lg">
+                <img src={block.dataUrl} alt="" className="max-h-72 w-full object-cover" />
+                {canEdit && (
+                  <button
+                    onClick={() => removeImageBlock(block.id)}
+                    title="Remove image"
+                    className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity hover:bg-black/70 group-hover/image:opacity-100"
+                  >
+                    <X className="h-4 w-4" />
+                  </button>
+                )}
+              </div>
+            ) : (
+              <NoteTextBlock
+                key={block.id}
+                block={block}
+                canEdit={canEdit}
+                matches={matches}
+                activeMatch={activeMatch}
+                showHighlights={showHighlights}
+                activeMarkRef={activeMarkRef}
+                registerRef={(el) => {
+                  blockRefs.current[block.id] = el;
+                }}
+                onFocusBlock={() => {
+                  lastFocusedBlockIdRef.current = block.id;
+                }}
+                onChangeText={(text) => updateTextBlock(block.id, text)}
+                onPasteImage={(file) => insertImageFile(file, block.id)}
+              />
+            ),
           )}
-          <textarea
-            ref={textareaRef}
-            value={body}
-            disabled={!canEdit}
-            onChange={(e) => {
-              setBody(e.target.value);
-              dirtyRef.current = true;
-            }}
-            onScroll={(e) => {
-              if (overlayRef.current) overlayRef.current.scrollTop = e.currentTarget.scrollTop;
-            }}
-            onPaste={(e) => {
-              if (!canEdit) return;
-              const imageItem = Array.from(e.clipboardData?.items ?? []).find((item) =>
-                item.type.startsWith("image/"),
-              );
-              const file = imageItem?.getAsFile();
-              if (file) {
-                e.preventDefault();
-                handleImageFile(file);
-              }
-            }}
-            placeholder="Start typing…"
-            className={`h-full w-full resize-none bg-transparent p-0 text-[14px] leading-relaxed placeholder:text-neutral-400 focus:outline-none disabled:opacity-60 ${
-              showHighlights ? "text-transparent caret-neutral-800 dark:caret-neutral-200" : "text-neutral-800 dark:text-neutral-200"
-            }`}
-          />
         </div>
 
         {findOpen && (
@@ -794,17 +932,121 @@ function NoteEditPanel({
   );
 }
 
+function ImagePicker({ onPick }: { onPick: (file: File | null | undefined) => void }) {
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  return (
+    <>
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        className="hidden"
+        onChange={(e) => {
+          onPick(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+      <button
+        onClick={() => fileInputRef.current?.click()}
+        title="Insert image"
+        className="rounded-md p-1 text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+      >
+        <ImagePlus className="h-3.5 w-3.5" />
+      </button>
+    </>
+  );
+}
+
+/** One text block of the body — an auto-growing `<textarea>` (no internal scrolling; the whole
+ *  panel scrolls instead) with its own highlight overlay for whatever find/replace matches fall
+ *  within it. Reused for every text run between images. */
+function NoteTextBlock({
+  block,
+  canEdit,
+  matches,
+  activeMatch,
+  showHighlights,
+  activeMarkRef,
+  registerRef,
+  onFocusBlock,
+  onChangeText,
+  onPasteImage,
+}: {
+  block: TextBlock;
+  canEdit: boolean;
+  matches: Match[];
+  activeMatch: Match | undefined;
+  showHighlights: boolean;
+  activeMarkRef: React.RefObject<HTMLElement | null>;
+  registerRef: (el: HTMLTextAreaElement | null) => void;
+  onFocusBlock: () => void;
+  onChangeText: (text: string) => void;
+  onPasteImage: (file: File | null | undefined) => void;
+}) {
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const localMatches = useMemo(() => matches.filter((m) => m.blockId === block.id), [matches, block.id]);
+  const blockShowsHighlights = showHighlights && localMatches.length > 0;
+
+  // Grows to fit content on every change — typing, a Replace/Replace All, or an image being
+  // spliced in/out next to it (which changes this block's text via the split/merge).
+  useLayoutEffect(() => {
+    const el = textareaRef.current;
+    if (!el) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight}px`;
+  }, [block.text]);
+
+  return (
+    <div className="relative">
+      {blockShowsHighlights && (
+        <div
+          aria-hidden
+          className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words p-0 text-[14px] leading-relaxed text-neutral-800 dark:text-neutral-200"
+        >
+          {renderHighlighted(block.text, localMatches, activeMatch, activeMarkRef)}
+        </div>
+      )}
+      <textarea
+        ref={(el) => {
+          textareaRef.current = el;
+          registerRef(el);
+        }}
+        value={block.text}
+        disabled={!canEdit}
+        rows={1}
+        onFocus={onFocusBlock}
+        onChange={(e) => onChangeText(e.target.value)}
+        onPaste={(e) => {
+          if (!canEdit) return;
+          const imageItem = Array.from(e.clipboardData?.items ?? []).find((item) =>
+            item.type.startsWith("image/"),
+          );
+          const file = imageItem?.getAsFile();
+          if (file) {
+            e.preventDefault();
+            onPasteImage(file);
+          }
+        }}
+        placeholder="Start typing…"
+        className={`block w-full resize-none overflow-hidden bg-transparent p-0 text-[14px] leading-relaxed placeholder:text-neutral-400 focus:outline-none disabled:opacity-60 ${
+          blockShowsHighlights ? "text-transparent caret-neutral-800 dark:caret-neutral-200" : "text-neutral-800 dark:text-neutral-200"
+        }`}
+      />
+    </div>
+  );
+}
+
 function renderHighlighted(
   text: string,
   matches: Match[],
-  activeIndex: number,
+  activeMatch: Match | undefined,
   activeRef: React.RefObject<HTMLElement | null>,
 ) {
   const nodes: React.ReactNode[] = [];
   let cursor = 0;
   matches.forEach((m, i) => {
     if (m.start > cursor) nodes.push(text.slice(cursor, m.start));
-    const isActive = i === activeIndex;
+    const isActive = m === activeMatch;
     nodes.push(
       <mark
         key={i}
@@ -858,7 +1100,7 @@ function FindReplaceBar({
   onClose: () => void;
 }) {
   return (
-    <div className="absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-black/10 dark:border-white/10 bg-white/95 dark:bg-neutral-800/95 backdrop-blur px-3 py-2 shadow-lg">
+    <div className="absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-black/10 dark:border-white/10 bg-white/95 dark:bg-neutral-800/95 backdrop-blur px-3 py-2 shadow-modal">
       <SearchIcon className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
       <input
         ref={inputRef}

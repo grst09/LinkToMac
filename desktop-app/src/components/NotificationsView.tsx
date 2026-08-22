@@ -1,7 +1,8 @@
 import { useEffect } from "react";
-import { AnimatePresence, motion } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import { X } from "lucide-react";
 import { SectionHeader } from "./SectionHeader";
+import { AnimatedListRow } from "./AnimatedListRow";
 import { sectionMeta } from "../theme/sections";
 import { avatarColorClass, initials } from "../theme/avatarColor";
 import { relativeTime } from "../utils/relativeTime";
@@ -33,8 +34,8 @@ export function NotificationsView() {
         ) : (
           <ul className="space-y-2">
             <AnimatePresence initial={false}>
-              {notifications.map((n) => (
-                <NotificationRow key={n.id} notification={n} />
+              {notifications.map((n, i) => (
+                <NotificationRow key={n.id} notification={n} index={i} />
               ))}
             </AnimatePresence>
           </ul>
@@ -44,15 +45,11 @@ export function NotificationsView() {
   );
 }
 
-function NotificationRow({ notification }: { notification: AppNotification }) {
+function NotificationRow({ notification, index }: { notification: AppNotification; index: number }) {
   return (
-    <motion.li
-      layout
-      initial={{ opacity: 0, y: -8, height: 0 }}
-      animate={{ opacity: 1, y: 0, height: "auto" }}
-      exit={{ opacity: 0, x: 24 }}
-      transition={{ duration: 0.2, ease: "easeOut" }}
-      className="flex gap-3 rounded-xl border border-black/5 dark:border-white/10 p-3"
+    <AnimatedListRow
+      index={index}
+      className="flex gap-3 rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 p-3 shadow-soft"
     >
       <NotificationIcon notification={notification} />
       <div className="min-w-0 flex-1">
@@ -94,7 +91,7 @@ function NotificationRow({ notification }: { notification: AppNotification }) {
           </div>
         )}
       </div>
-    </motion.li>
+    </AnimatedListRow>
   );
 }
 

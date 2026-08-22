@@ -86,17 +86,21 @@ export function ScreenMirrorView() {
         <ActiveMirror config={config} canvasRef={canvasRef} onStop={handleStop} />
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-3 px-8 text-center">
-          <MonitorSmartphone className="h-10 w-10 text-neutral-400 dark:text-neutral-500" strokeWidth={1.75} />
+          <span className="flex h-16 w-16 items-center justify-center rounded-full bg-teal-500/10 dark:bg-teal-400/10">
+            <MonitorSmartphone className="h-7 w-7 text-teal-600 dark:text-teal-400" strokeWidth={1.75} />
+          </span>
           <p className="max-w-xs text-sm text-neutral-500 dark:text-neutral-400">
             {stoppedReason ? (STOPPED_REASON_MESSAGE[stoppedReason] ?? DEFAULT_MESSAGE) : DEFAULT_MESSAGE}
           </p>
-          <button
+          <motion.button
+            whileHover={{ y: -1 }}
+            whileTap={{ scale: 0.97 }}
             onClick={handleStart}
             disabled={starting}
-            className="rounded-full bg-teal-500 px-4 py-1.5 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
+            className="rounded-full bg-teal-500 px-4 py-1.5 text-sm font-medium text-white shadow-soft transition-opacity hover:opacity-90 disabled:opacity-50"
           >
             {starting ? "Starting…" : "Start Mirroring"}
-          </button>
+          </motion.button>
         </div>
       )}
     </div>
@@ -171,7 +175,7 @@ function ActiveMirror({ config, canvasRef, onStop }: ActiveMirrorProps) {
           style={{ aspectRatio: `${config.width} / ${config.height}` }}
         />
       </motion.div>
-      <div className="flex items-center gap-3 border-t border-black/5 dark:border-white/10 p-2">
+      <div className="flex items-center gap-3 border-t border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 p-2 shadow-soft">
         <IconButton title="Back" onClick={() => invoke("send_mirror_key", { action: "back" })}>
           <ChevronLeft className="h-4 w-4" />
         </IconButton>

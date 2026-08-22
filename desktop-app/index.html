@@ -4,7 +4,23 @@
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/vite.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Tauri + React + Typescript</title>
+    <title>LinkToMac</title>
+    <script>
+      (function () {
+        try {
+          var pref = localStorage.getItem("linktomac:theme") || "system";
+          var dark =
+            pref === "dark" ||
+            (pref === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+          if (dark) document.documentElement.classList.add("dark");
+          // Pin color-scheme to the resolved theme before first paint — otherwise the static
+          // "light dark" below leaves the browser free to pick OS-driven UA-default colors for
+          // anything without an explicit author color, which can render invisible (e.g. white
+          // text on a white pill) when the OS scheme disagrees with the resolved theme.
+          document.documentElement.style.colorScheme = dark ? "dark" : "light";
+        } catch (e) {}
+      })();
+    </script>
   </head>
 
   <body>

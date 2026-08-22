@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { RefreshCw, UserPlus, CheckSquare, Square, Trash2, Users, Search as SearchIcon, Phone, Star, CloudOff } from "lucide-react";
 import { SectionHeader } from "./SectionHeader";
 import { SearchBar } from "./SearchBar";
+import { SegmentedControl } from "./SegmentedControl";
 import { ResizableDivider } from "./ResizableDivider";
 import { InitialsAvatar } from "./InitialsAvatar";
 import {
@@ -158,19 +159,17 @@ export function ContactsView() {
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex flex-col" style={{ width: listWidth }}>
-          <div className="flex gap-1 rounded-lg bg-black/[0.04] dark:bg-white/[0.06] m-3 mb-0 p-0.5 text-[13px]">
-            <button
-              onClick={() => switchTab("contacts")}
-              className={`flex-1 rounded-md py-1 font-medium transition-colors ${subTab === "contacts" ? "bg-white dark:bg-neutral-700 shadow-sm" : "text-neutral-500"}`}
-            >
-              Contacts
-            </button>
-            <button
-              onClick={() => switchTab("calls")}
-              className={`flex-1 rounded-md py-1 font-medium transition-colors ${subTab === "calls" ? "bg-white dark:bg-neutral-700 shadow-sm" : "text-neutral-500"}`}
-            >
-              Call History
-            </button>
+          <div className="m-3 mb-0">
+            <SegmentedControl
+              layoutId="contacts-subtab"
+              fullWidth
+              value={subTab}
+              onChange={switchTab}
+              options={[
+                { value: "contacts", label: "Contacts" },
+                { value: "calls", label: "Call History" },
+              ]}
+            />
           </div>
           <SearchBar
             value={searchText}
@@ -237,7 +236,7 @@ export function ContactsView() {
 
         <ResizableDivider width={listWidth} onWidthChange={setListWidth} minWidth={260} maxWidth={560} />
 
-        <div className="m-3 flex-1 overflow-hidden rounded-2xl bg-black/[0.015] dark:bg-white/[0.02]">
+        <div className="m-3 flex-1 overflow-hidden rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 shadow-soft">
           {subTab === "contacts" ? (
             isCreating ? (
               <ContactEditPanel existing={null} onDone={() => setIsCreating(false)} />

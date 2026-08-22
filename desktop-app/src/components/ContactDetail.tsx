@@ -29,7 +29,11 @@ export function ContactDetailPanel({
     <div
       className="h-full overflow-y-auto"
       style={{
-        backgroundImage: `linear-gradient(to bottom, ${tint}73, ${tint}2e, transparent 45%)`,
+        // Fades across the panel's full height rather than hitting full transparency partway
+        // down — a short fade reads fine against a near-transparent card backdrop, but now that
+        // the detail panel has an opaque white/dark card background (see ContactsView.tsx), an
+        // early cutoff shows up as a hard seam instead of a smooth blend.
+        backgroundImage: `linear-gradient(to bottom, ${tint}59, ${tint}1f 40%, transparent 100%)`,
       }}
     >
       <motion.div
@@ -73,17 +77,17 @@ export function ContactDetailPanel({
           />
         </div>
 
-        <div className="w-full max-w-[360px] rounded-[10px] bg-black/[0.03] dark:bg-white/[0.06]">
+        <div className="w-full max-w-[360px] rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 shadow-soft">
           <InfoRow label="phone" value={contact.phoneNumber} />
           {contact.email && <InfoRow label="email" value={contact.email} border />}
           {contact.organization && <InfoRow label="organization" value={contact.organization} border />}
         </div>
 
         {canEdit && (
-          <div className="w-full max-w-[360px] overflow-hidden rounded-[10px]">
+          <div className="w-full max-w-[360px] overflow-hidden rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 shadow-soft">
             <button
               onClick={onEdit}
-              className="flex w-full items-center justify-between bg-black/[0.03] dark:bg-white/[0.06] px-3 py-3 text-[13px] font-medium text-blue-600 dark:text-blue-400 hover:bg-black/[0.06] dark:hover:bg-white/[0.1] transition-colors"
+              className="flex w-full items-center justify-between px-3 py-3 text-[13px] font-medium text-blue-600 dark:text-blue-400 hover:bg-black/[0.03] dark:hover:bg-white/[0.05] transition-colors"
             >
               Edit Contact
               <Pencil className="h-4 w-4" />
@@ -91,7 +95,7 @@ export function ContactDetailPanel({
             <div className="h-px bg-black/5 dark:bg-white/10" />
             <button
               onClick={() => setConfirmingDelete(true)}
-              className="flex w-full items-center justify-between bg-black/[0.03] dark:bg-white/[0.06] px-3 py-3 text-[13px] font-medium text-red-600 dark:text-red-400 hover:bg-black/[0.06] dark:hover:bg-white/[0.1] transition-colors"
+              className="flex w-full items-center justify-between px-3 py-3 text-[13px] font-medium text-red-600 dark:text-red-400 hover:bg-red-500/5 transition-colors"
             >
               Delete Contact
               <Trash2 className="h-4 w-4" />
@@ -256,12 +260,16 @@ export function ConfirmDialog({
   }, [onCancel, onConfirm]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onCancel}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[2px]"
+      onClick={onCancel}
+    >
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
+        initial={{ opacity: 0, scale: 0.95, y: 4 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ type: "spring", stiffness: 500, damping: 34 }}
         onClick={(e) => e.stopPropagation()}
-        className="w-80 rounded-xl bg-white dark:bg-neutral-900 p-5 shadow-xl"
+        className="w-80 rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 p-5 shadow-modal"
       >
         <div className="flex items-start justify-between">
           <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">{title}</h3>

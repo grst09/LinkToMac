@@ -75,20 +75,23 @@ export function PhotosView() {
                   style={{ gridTemplateColumns: "repeat(auto-fill, minmax(110px, 160px))" }}
                 >
                   {monthPhotos.map((photo) => (
-                    <button
+                    <motion.button
                       key={photo.id}
+                      whileHover={{ scale: 1.03 }}
+                      whileTap={{ scale: 0.98 }}
+                      transition={{ type: "spring", stiffness: 400, damping: 25 }}
                       onClick={() => {
                         setSelected(photo);
                         requestPhotoFull(photo.id);
                       }}
-                      className="aspect-square overflow-hidden rounded-[4px] bg-black/5 dark:bg-white/10"
+                      className="aspect-square overflow-hidden rounded-lg bg-black/5 dark:bg-white/10 shadow-soft"
                     >
                       <img
                         src={`data:image/jpeg;base64,${photo.thumbnailBase64}`}
                         alt=""
                         className="h-full w-full object-cover"
                       />
-                    </button>
+                    </motion.button>
                   ))}
                 </div>
               </div>

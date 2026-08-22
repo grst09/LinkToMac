@@ -8,9 +8,29 @@ import { BatteryIndicator } from "./BatteryIndicator";
  *  connected, battery when known. The disconnect/reconnect toggle from the old app isn't
  *  wired up yet (the Rust server doesn't support runtime start/stop of the listener yet —
  *  see docs/PLAN.md). */
-export function DeviceCard() {
+export function DeviceCard({ collapsed = false }: { collapsed?: boolean }) {
   const { status, deviceName, deviceStatus } = useConnectionStore();
   const connected = status === "connected";
+
+  if (collapsed) {
+    return (
+      <div
+        className="mx-2 mt-3 mb-2 flex items-center justify-center rounded-xl bg-black/[0.03] dark:bg-white/[0.06] py-2.5"
+        title={`${deviceName ?? "No device"} — ${connected ? "Connected" : "Waiting to pair"}`}
+      >
+        <span className="relative">
+          <Smartphone className="h-5 w-5 text-neutral-400 dark:text-neutral-500" strokeWidth={1.75} />
+          <motion.span
+            className={`absolute -bottom-0.5 -right-0.5 h-2 w-2 rounded-full ring-2 ring-white dark:ring-neutral-900 ${
+              connected ? "bg-emerald-500" : "bg-neutral-400 dark:bg-neutral-600"
+            }`}
+            animate={connected ? { scale: [1, 1.3, 1] } : { scale: 1 }}
+            transition={connected ? { duration: 1.8, repeat: Infinity, ease: "easeInOut" } : undefined}
+          />
+        </span>
+      </div>
+    );
+  }
 
   return (
     <div className="mx-3 mt-3 mb-2 rounded-xl bg-black/[0.03] dark:bg-white/[0.06] p-2.5">

@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { motion, AnimatePresence } from "framer-motion";
+import { AnimatePresence } from "framer-motion";
 import { Laptop, Smartphone, Copy, Check, Trash2, Clipboard as ClipboardIcon } from "lucide-react";
 import { SectionHeader } from "./SectionHeader";
+import { AnimatedListRow } from "./AnimatedListRow";
 import { Placeholder, ConfirmDialog } from "./ContactDetail";
 import { sectionMeta } from "../theme/sections";
 import { relativeTime } from "../utils/relativeTime";
@@ -45,8 +46,8 @@ export function ClipboardView() {
         ) : (
           <ul className="space-y-2">
             <AnimatePresence initial={false}>
-              {entries.map((entry) => (
-                <ClipboardRow key={entry.id} entry={entry} />
+              {entries.map((entry, i) => (
+                <ClipboardRow key={entry.id} entry={entry} index={i} />
               ))}
             </AnimatePresence>
           </ul>
@@ -68,18 +69,14 @@ export function ClipboardView() {
   );
 }
 
-function ClipboardRow({ entry }: { entry: ClipboardEntry }) {
+function ClipboardRow({ entry, index }: { entry: ClipboardEntry; index: number }) {
   const [copied, setCopied] = useState(false);
   const SourceIcon = entry.source === "mac" ? Laptop : Smartphone;
 
   return (
-    <motion.li
-      layout
-      initial={{ opacity: 0, y: -8, height: 0 }}
-      animate={{ opacity: 1, y: 0, height: "auto" }}
-      exit={{ opacity: 0, x: 24 }}
-      transition={{ duration: 0.2, ease: "easeOut" }}
-      className="flex gap-3 rounded-xl border border-black/5 dark:border-white/10 p-3"
+    <AnimatedListRow
+      index={index}
+      className="flex gap-3 rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 p-3 shadow-soft"
     >
       <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-400">
         <SourceIcon className="h-4 w-4" />
@@ -107,6 +104,6 @@ function ClipboardRow({ entry }: { entry: ClipboardEntry }) {
           {entry.text}
         </p>
       </div>
-    </motion.li>
+    </AnimatedListRow>
   );
 }

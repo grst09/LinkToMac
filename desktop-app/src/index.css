@@ -1,7 +1,22 @@
 @import "tailwindcss";
 
+@custom-variant dark (&:where(.dark, .dark *));
+
 @theme {
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Avenir, Helvetica, Arial, sans-serif;
+
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.04), 0 8px 20px -8px rgb(0 0 0 / 0.10);
+  --shadow-soft-hover: 0 2px 4px rgb(0 0 0 / 0.06), 0 12px 28px -8px rgb(0 0 0 / 0.16);
+  --shadow-modal: 0 4px 12px rgb(0 0 0 / 0.10), 0 24px 48px -12px rgb(0 0 0 / 0.28);
+}
+
+/* Dark-mode shadow overrides — gated on the same `.dark` class the `dark:` variant now uses
+   (see @custom-variant above), so shadows and color utilities always agree on which mode is
+   active instead of racing a separate prefers-color-scheme check. */
+.dark {
+  --shadow-soft: 0 1px 2px rgb(0 0 0 / 0.24), 0 8px 20px -8px rgb(0 0 0 / 0.5);
+  --shadow-soft-hover: 0 2px 4px rgb(0 0 0 / 0.3), 0 12px 28px -8px rgb(0 0 0 / 0.6);
+  --shadow-modal: 0 4px 12px rgb(0 0 0 / 0.4), 0 24px 48px -12px rgb(0 0 0 / 0.7);
 }
 
 :root {

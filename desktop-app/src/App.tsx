@@ -16,6 +16,7 @@ import { initConnectionListeners } from "./store/connection";
 import { initNotificationListeners } from "./store/notifications";
 import { initSyncSettingsListeners } from "./store/syncSettings";
 import { useNavigationStore, clearPendingSection } from "./store/navigation";
+import { initTheme } from "./store/theme";
 
 function App() {
   const [selection, setSelection] = useState<SectionId>("device");
@@ -23,6 +24,7 @@ function App() {
   const pendingSection = useNavigationStore((s) => s.pendingSection);
 
   useEffect(() => {
+    initTheme();
     initConnectionListeners();
     initNotificationListeners();
     initSyncSettingsListeners();
@@ -42,16 +44,16 @@ function App() {
   }, [pendingSection]);
 
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-white dark:bg-neutral-950">
+    <div className="flex h-screen w-screen overflow-hidden bg-neutral-50 dark:bg-neutral-950">
       <Sidebar selection={selection} onSelect={setSelection} />
-      <main className="flex-1 overflow-hidden">
-        <AnimatePresence mode="wait">
+      <main className="relative flex-1 overflow-hidden">
+        <AnimatePresence initial={false}>
           <motion.div
             key={selection}
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.15 }}
+            initial={{ opacity: 0, y: 10, scale: 0.99 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, position: "absolute", inset: 0 }}
+            transition={{ type: "spring", stiffness: 500, damping: 40 }}
             className="h-full"
           >
             {selection === "device" ? (

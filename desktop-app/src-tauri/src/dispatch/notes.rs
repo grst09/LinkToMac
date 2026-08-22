@@ -17,13 +17,20 @@ pub async fn sync(payload: NotesSyncPayload, state: &std::sync::Arc<AppState>) {
     let pending = state.pending_note_mutations.lock().await.all();
     for mutation in &pending {
         match mutation {
-            PendingNoteMutation::SetPinned { id, is_pinned } => {
-                if let Some(note) = notes.iter_mut().find(|n| &n.id == id) {
-                    note.is_pinned = *is_pinned;
-                }
-            }
             PendingNoteMutation::Delete { id } => {
                 notes.retain(|n| &n.id != id);
+            }
+            PendingNoteMutation::Change { id, set_pinned, content } => {
+                if let Some(note) = notes.iter_mut().find(|n| &n.id == id) {
+                    if let Some(is_pinned) = set_pinned {
+                        note.is_pinned = *is_pinned;
+                    }
+                    if let Some(c) = content {
+                        note.title = c.title.clone();
+                        note.body = c.body.clone();
+                        note.image_base64 = c.image_base64.clone();
+                    }
+                }
             }
         }
     }

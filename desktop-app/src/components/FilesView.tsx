@@ -13,6 +13,7 @@ import {
   Folder,
 } from "lucide-react";
 import { SectionHeader } from "./SectionHeader";
+import { SegmentedControl } from "./SegmentedControl";
 import { ConfirmDialog } from "./ContactDetail";
 import { sectionMeta } from "../theme/sections";
 import { folderIconFor } from "../theme/folderIcons";
@@ -207,7 +208,7 @@ export function FilesView() {
           }}
           onDragLeave={() => setDragOver(false)}
           onDrop={handleDrop}
-          className={`flex h-[110px] flex-col items-center justify-center gap-1.5 rounded-xl border-[1.5px] border-dashed transition-colors ${
+          className={`flex h-[110px] flex-col items-center justify-center gap-1.5 rounded-2xl border-[1.5px] border-dashed transition-colors ${
             dragOver ? "border-blue-500 bg-blue-500/[0.08]" : "border-neutral-300/60 dark:border-neutral-600/60"
           }`}
         >
@@ -241,20 +242,16 @@ export function FilesView() {
           New Folder
         </button>
         <div className="flex-1" />
-        <div className="flex rounded-md bg-black/[0.04] dark:bg-white/[0.06] p-0.5">
-          <button
-            onClick={() => setViewMode("grid")}
-            className={`rounded p-1 ${viewMode === "grid" ? "bg-white dark:bg-neutral-700 shadow-sm" : "text-neutral-400"}`}
-          >
-            <LayoutGrid className="h-3.5 w-3.5" />
-          </button>
-          <button
-            onClick={() => setViewMode("list")}
-            className={`rounded p-1 ${viewMode === "list" ? "bg-white dark:bg-neutral-700 shadow-sm" : "text-neutral-400"}`}
-          >
-            <List className="h-3.5 w-3.5" />
-          </button>
-        </div>
+        <SegmentedControl
+          layoutId="files-viewmode"
+          iconOnly
+          value={viewMode}
+          onChange={setViewMode}
+          options={[
+            { value: "grid", label: "Grid view", icon: LayoutGrid },
+            { value: "list", label: "List view", icon: List },
+          ]}
+        />
       </div>
 
       <div
@@ -552,7 +549,7 @@ function ContextMenu({
     <div
       style={{ left: menu.x, top: menu.y }}
       onClick={(e) => e.stopPropagation()}
-      className="fixed z-50 min-w-[160px] rounded-lg border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-800 py-1 shadow-lg"
+      className="fixed z-50 min-w-[160px] rounded-xl border border-black/10 dark:border-white/10 bg-white dark:bg-neutral-800 py-1 shadow-modal"
     >
       {items.map((item) => (
         <button
@@ -598,12 +595,16 @@ function TextInputDialog({
   }, [onCancel]);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30" onClick={onCancel}>
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 backdrop-blur-[2px]"
+      onClick={onCancel}
+    >
       <motion.div
-        initial={{ opacity: 0, scale: 0.95 }}
-        animate={{ opacity: 1, scale: 1 }}
+        initial={{ opacity: 0, scale: 0.95, y: 4 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        transition={{ type: "spring", stiffness: 500, damping: 34 }}
         onClick={(e) => e.stopPropagation()}
-        className="w-80 rounded-xl bg-white dark:bg-neutral-900 p-5 shadow-xl"
+        className="w-80 rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 p-5 shadow-modal"
       >
         <h3 className="font-semibold text-neutral-900 dark:text-neutral-100">{title}</h3>
         <input
