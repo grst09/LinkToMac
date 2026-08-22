@@ -6,20 +6,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.BrightnessAuto
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.LightMode
-import androidx.compose.material3.Button
-import androidx.compose.material3.Card
-import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SegmentedButton
-import androidx.compose.material3.SegmentedButtonDefaults
-import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -32,6 +25,9 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import com.linktomac.ui.components.LinkCard
+import com.linktomac.ui.components.PillButton
+import com.linktomac.ui.components.SlidingSegmentedControl
 import com.linktomac.ui.theme.ThemeMode
 
 /**
@@ -71,49 +67,39 @@ fun SettingsScreen(
         Text("Settings", style = MaterialTheme.typography.headlineMedium)
         Spacer(Modifier.height(16.dp))
 
-        Card(modifier = Modifier.fillMaxWidth()) {
+        LinkCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("Appearance", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(12.dp))
-                SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
-                    ThemeMode.entries.forEachIndexed { index, mode ->
-                        SegmentedButton(
-                            selected = themeMode == mode,
-                            onClick = { onThemeModeChanged(mode) },
-                            shape = SegmentedButtonDefaults.itemShape(index = index, count = ThemeMode.entries.size),
-                            colors = SegmentedButtonDefaults.colors(
-                                activeContainerColor = MaterialTheme.colorScheme.primaryContainer,
-                                activeContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                                activeBorderColor = MaterialTheme.colorScheme.primary
-                            ),
-                            icon = {
-                                Icon(
-                                    when (mode) {
-                                        ThemeMode.SYSTEM -> Icons.Filled.BrightnessAuto
-                                        ThemeMode.LIGHT -> Icons.Filled.LightMode
-                                        ThemeMode.DARK -> Icons.Filled.DarkMode
-                                    },
-                                    contentDescription = null,
-                                    modifier = Modifier.size(SegmentedButtonDefaults.IconSize)
-                                )
-                            }
-                        ) {
-                            Text(
-                                when (mode) {
-                                    ThemeMode.SYSTEM -> "System"
-                                    ThemeMode.LIGHT -> "Light"
-                                    ThemeMode.DARK -> "Dark"
-                                }
-                            )
+                // One connected capsule, not three separate pills (those either scroll or need
+                // to shrink to fit this card's width), with the active segment sliding smoothly
+                // between positions instead of Material3's SegmentedButton abruptly flipping
+                // each segment's own color with no shared animated element.
+                SlidingSegmentedControl(
+                    options = ThemeMode.entries,
+                    selected = themeMode,
+                    onSelect = onThemeModeChanged,
+                    label = { mode ->
+                        when (mode) {
+                            ThemeMode.SYSTEM -> "System"
+                            ThemeMode.LIGHT -> "Light"
+                            ThemeMode.DARK -> "Dark"
                         }
-                    }
-                }
+                    },
+                    icon = { mode ->
+                        when (mode) {
+                            ThemeMode.SYSTEM -> Icons.Filled.BrightnessAuto
+                            ThemeMode.LIGHT -> Icons.Filled.LightMode
+                            ThemeMode.DARK -> Icons.Filled.DarkMode
+                        }
+                    },
+                )
             }
         }
         Spacer(Modifier.height(16.dp))
 
         if (!batteryOptimizationIgnored) {
-            Card(modifier = Modifier.fillMaxWidth()) {
+            LinkCard(modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Text("Battery optimization", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(8.dp))
@@ -122,7 +108,7 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.bodySmall
                     )
                     Spacer(Modifier.height(12.dp))
-                    Button(onClick = onRequestIgnoreBatteryOptimization) {
+                    PillButton(onClick = onRequestIgnoreBatteryOptimization) {
                         Text("Allow Background Activity")
                     }
                 }
@@ -130,7 +116,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(16.dp))
         }
 
-        Card(modifier = Modifier.fillMaxWidth()) {
+        LinkCard(modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp)) {
                 Text("About", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(8.dp))

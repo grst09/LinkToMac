@@ -41,23 +41,21 @@ import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.ContentPaste
 import androidx.compose.material.icons.filled.Contacts
+import androidx.compose.material.icons.filled.Folder
 import androidx.compose.material.icons.filled.Laptop
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.QrCodeScanner
 import androidx.compose.material.icons.filled.Smartphone
-import androidx.compose.material3.Button
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
@@ -71,13 +69,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalLifecycleOwner
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.linktomac.net.ConnectionState
 import com.linktomac.service.SyncForegroundService
 import com.linktomac.storage.SyncCategory
+import com.linktomac.ui.components.AppHeader
+import com.linktomac.ui.components.InfoCard
+import com.linktomac.ui.components.LinkCard
+import com.linktomac.ui.components.ListItemCard
+import com.linktomac.ui.components.PillButton
+import com.linktomac.ui.components.PillOutlinedButton
 import kotlinx.coroutines.delay
 
 @Composable
@@ -208,7 +211,7 @@ fun PairingScreen(
                         onOpenSyncOptions = { showSyncOptions = true }
                     )
                 } else {
-                    Card(modifier = Modifier.fillMaxWidth()) {
+                    LinkCard(modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(16.dp)) {
                             Text(
                                 "No Mac paired yet. Scan a QR code from your Mac to get started.",
@@ -230,7 +233,7 @@ fun PairingScreen(
                                 }
                             }
                             Spacer(Modifier.height(12.dp))
-                            Button(onClick = onScanRequested) {
+                            PillButton(onClick = onScanRequested) {
                                 Icon(Icons.Filled.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
                                 Spacer(Modifier.width(8.dp))
                                 Text("Scan Pairing Code")
@@ -253,36 +256,58 @@ fun PairingScreen(
                 Column(modifier = Modifier.animateContentSize()) {
                     PermissionCard(
                         visible = !notificationAccessGranted,
+                        icon = Icons.Filled.Notifications,
                         title = "Notification access needed",
-                        description = "LinkToMac needs permission to read notifications so it can mirror them to your Mac.",
+                        bullets = listOf(
+                            "Reads incoming notifications.",
+                            "Mirrors them to your Mac in real time.",
+                        ),
                         actionLabel = "Open Settings",
                         onAction = onRequestNotificationAccess
                     )
                     PermissionCard(
                         visible = !callsAndMessagesAccessGranted,
+                        icon = Icons.Filled.Call,
                         title = "Call & message access needed",
-                        description = "LinkToMac needs permission to read your call log and messages so it can show them on your Mac, and to send texts on your behalf when you reply from there.",
+                        bullets = listOf(
+                            "Reads your call log and messages.",
+                            "Shows them on your Mac.",
+                            "Sends texts on your behalf when you reply there.",
+                        ),
                         actionLabel = "Grant Access",
                         onAction = onRequestCallsAndMessagesAccess
                     )
                     PermissionCard(
                         visible = !photoAccessGranted,
+                        icon = Icons.Filled.Photo,
                         title = "Photo access needed",
-                        description = "LinkToMac needs permission to read your photos so you can browse them from your Mac.",
+                        bullets = listOf(
+                            "Reads your photos.",
+                            "Lets you browse them from your Mac.",
+                        ),
                         actionLabel = "Grant Access",
                         onAction = onRequestPhotoAccess
                     )
                     PermissionCard(
                         visible = !accessibilityServiceEnabled,
+                        icon = Icons.Filled.TouchApp,
                         title = "Screen mirroring access needed",
-                        description = "To tap, swipe, and type on your phone from your Mac during screen mirroring, LinkToMac needs Accessibility access. Find LinkToMac in the list and turn it on.",
+                        bullets = listOf(
+                            "Needs Accessibility access to work.",
+                            "Lets your Mac tap, swipe, and type on your phone during mirroring.",
+                            "Find LinkToMac in the list and turn it on.",
+                        ),
                         actionLabel = "Open Settings",
                         onAction = onRequestAccessibilityAccess
                     )
                     PermissionCard(
                         visible = !fileAccessGranted,
+                        icon = Icons.Filled.Folder,
                         title = "File access needed",
-                        description = "LinkToMac needs access to your phone's storage so you can browse and transfer files from your Mac.",
+                        bullets = listOf(
+                            "Accesses your phone's storage.",
+                            "Lets you browse and transfer files from your Mac.",
+                        ),
                         actionLabel = "Grant Access",
                         onAction = onRequestFileAccess
                     )
@@ -295,37 +320,14 @@ fun PairingScreen(
 
 @Composable
 private fun HeroCard(paired: Boolean, connectionState: ConnectionState) {
-    // Deliberately no Card/background of its own — sits directly on the page background like
-    // any other content, rather than reading as a separate floating panel.
-    Column(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        horizontalAlignment = Alignment.CenterHorizontally
-    ) {
-        Box(
-            modifier = Modifier
-                .size(56.dp)
-                .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(
-                Icons.Filled.Smartphone,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer
-            )
-        }
-        Spacer(Modifier.height(12.dp))
-        Text(
-            "LinkToMac",
-            style = MaterialTheme.typography.headlineSmall,
-            color = MaterialTheme.colorScheme.onSurface
-        )
-        Spacer(Modifier.height(4.dp))
-        Text(
-            "Mirror notifications, calls, and files with your Mac.",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            textAlign = TextAlign.Center
+    // Left-aligned branding header (was centered) — frees vertical space for the real content
+    // below (paired-device card, permission cards) instead of the icon/title eating the top
+    // third of the screen, matching the reference design's compact home-screen header.
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        AppHeader(
+            leadingIcon = Icons.Filled.Smartphone,
+            title = "LinkToMac",
+            subtitle = "Mirror notifications, calls, and files with your Mac.",
         )
         Spacer(Modifier.height(16.dp))
         StatusPill(paired = paired, connectionState = connectionState)
@@ -387,55 +389,49 @@ private fun PairedDeviceRow(
 ) {
     val connected = connectionState is ConnectionState.Connected
     val busy = connectionState is ConnectionState.Connected || connectionState is ConnectionState.Connecting
-    Card(onClick = onOpenSyncOptions, modifier = Modifier.fillMaxWidth()) {
-        Column(modifier = Modifier.fillMaxWidth().padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(CircleShape)
-                        .background(
-                            if (connected) MaterialTheme.colorScheme.primaryContainer
-                            else MaterialTheme.colorScheme.surfaceVariant
-                        ),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        if (connected) Icons.Filled.Check else Icons.Filled.Laptop,
-                        contentDescription = null,
-                        tint = if (connected) MaterialTheme.colorScheme.onPrimaryContainer
-                        else MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                Spacer(Modifier.width(12.dp))
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(macName, style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        pairedStatusText(connectionState),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = pairedStatusColor(connectionState, MaterialTheme.colorScheme)
-                    )
-                }
+    ListItemCard(
+        onClick = onOpenSyncOptions,
+        leading = {
+            Box(
+                modifier = Modifier
+                    .size(44.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (connected) MaterialTheme.colorScheme.primaryContainer
+                        else MaterialTheme.colorScheme.surfaceVariant
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
                 Icon(
-                    Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                    contentDescription = "Sync options",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    if (connected) Icons.Filled.Check else Icons.Filled.Laptop,
+                    contentDescription = null,
+                    tint = if (connected) MaterialTheme.colorScheme.onPrimaryContainer
+                    else MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (busy) {
-                    OutlinedButton(onClick = onDisconnect) { Text("Disconnect") }
-                } else {
-                    OutlinedButton(onClick = onReconnect) { Text("Reconnect") }
-                }
-                TextButton(
-                    onClick = onForget,
-                    colors = ButtonDefaults.textButtonColors(contentColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text("Forget This Mac")
-                }
+        },
+        title = macName,
+        subtitle = pairedStatusText(connectionState),
+        subtitleColor = pairedStatusColor(connectionState, MaterialTheme.colorScheme),
+        trailingTop = {
+            Icon(
+                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                contentDescription = "Sync options",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        },
+    ) {
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (busy) {
+                PillButton(onClick = onDisconnect) { Text("Disconnect") }
+            } else {
+                PillButton(onClick = onReconnect) { Text("Reconnect") }
+            }
+            PillOutlinedButton(
+                onClick = onForget,
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
+            ) {
+                Text("Forget This Mac")
             }
         }
     }
@@ -489,22 +485,22 @@ private fun DeviceSyncOptionsView(
 @Composable
 private fun SyncOptionRow(category: SyncCategory, enabled: Boolean, onToggle: (Boolean) -> Unit) {
     val (icon, label, description) = syncCategoryDisplay(category)
-    Card(modifier = Modifier.fillMaxWidth()) {
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(label, style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(2.dp))
-                Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    ListItemCard(
+        leading = {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Spacer(Modifier.width(8.dp))
-            Switch(checked = enabled, onCheckedChange = onToggle)
-        }
-    }
+        },
+        title = label,
+        subtitle = description,
+        trailingTop = { Switch(checked = enabled, onCheckedChange = onToggle) },
+    )
 }
 
 private data class SyncCategoryDisplay(val icon: ImageVector, val label: String, val description: String)
@@ -533,8 +529,9 @@ private fun syncCategoryDisplay(category: SyncCategory): SyncCategoryDisplay = w
 @Composable
 private fun PermissionCard(
     visible: Boolean,
+    icon: ImageVector,
     title: String,
-    description: String,
+    bullets: List<String>,
     actionLabel: String,
     onAction: () -> Unit
 ) {
@@ -544,15 +541,12 @@ private fun PermissionCard(
         exit = fadeOut() + shrinkVertically()
     ) {
         Column {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(title, style = MaterialTheme.typography.titleMedium)
-                    Spacer(Modifier.height(8.dp))
-                    Text(description, style = MaterialTheme.typography.bodySmall)
-                    Spacer(Modifier.height(12.dp))
-                    OutlinedButton(onClick = onAction) { Text(actionLabel) }
-                }
-            }
+            InfoCard(
+                icon = icon,
+                title = title,
+                bullets = bullets,
+                footer = { PillButton(onClick = onAction) { Text(actionLabel) } },
+            )
             Spacer(Modifier.height(16.dp))
         }
     }

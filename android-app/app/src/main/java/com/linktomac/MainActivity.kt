@@ -13,6 +13,7 @@ import android.os.Environment
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.ComponentActivity
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
@@ -117,6 +118,13 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // The manifest theme is a raw framework style (Theme.Material.Light.NoActionBar, kept
+        // for API 26 safety — see the SideEffect below), which paints the status/nav bars with
+        // its own default color instead of the app's actual canvas. enableEdgeToEdge() makes the
+        // system draw them transparently and edge-to-edge, so the app's own background (already
+        // Scaffold's default containerColor) shows straight through underneath instead — this is
+        // what makes the status bar read as part of the app rather than a mismatched system bar.
+        enableEdgeToEdge()
 
         scanLauncher = registerForActivityResult(ScanContract()) { result ->
             result.contents?.let { qrJson ->

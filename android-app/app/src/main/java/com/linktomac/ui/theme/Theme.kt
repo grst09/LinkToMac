@@ -100,6 +100,7 @@ fun LinkToMacTheme(
 ) {
     MaterialTheme(
         colorScheme = if (darkTheme) LinkToMacDarkColors else LinkToMacLightColors,
+        shapes = LinkToMacShapes,
         content = content
     )
 }

@@ -262,6 +262,7 @@ private fun NoteCard(note: NoteEntry, onClick: () -> Unit) {
         onClick = onClick,
         colors = CardDefaults.cardColors(containerColor = background),
         shape = RoundedCornerShape(16.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(12.dp)) {
