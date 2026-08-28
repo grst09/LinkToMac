@@ -53,6 +53,16 @@ pub struct AppSettings {
     /// so this can only be lowered from the frontend, never raised past what Android will
     /// actually accept.
     pub max_transfer_mb: u64,
+    /// Whether the Mac advertises itself over mDNS and accepts new incoming connections at all —
+    /// see `net::server::run`'s doc comment. Off means a disconnected Mac stays fully closed
+    /// (no open port, not discoverable) instead of always listening for a reconnect. Defaults to
+    /// on so existing behavior — and first-run pairing — isn't broken by this setting's addition.
+    #[serde(default = "default_discovery_enabled")]
+    pub discovery_enabled: bool,
+}
+
+fn default_discovery_enabled() -> bool {
+    true
 }
 
 impl Default for AppSettings {
@@ -62,6 +72,7 @@ impl Default for AppSettings {
             clipboard_sync_enabled: true,
             mirror_quality: MirrorQuality::Balanced,
             max_transfer_mb: 50,
+            discovery_enabled: true,
         }
     }
 }

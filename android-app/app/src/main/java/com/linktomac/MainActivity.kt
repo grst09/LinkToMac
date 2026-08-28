@@ -3,6 +3,7 @@ package com.linktomac
 import android.Manifest
 import android.app.Activity
 import android.content.ClipboardManager
+import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.media.projection.MediaProjectionManager
@@ -11,13 +12,16 @@ import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.PowerManager
+import android.provider.MediaStore
 import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.lifecycle.lifecycleScope
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -60,6 +64,8 @@ import com.linktomac.ui.qrScanOptions
 import com.linktomac.ui.theme.LinkToMacTheme
 import com.linktomac.ui.theme.ThemeMode
 import com.linktomac.ui.theme.resolveDarkTheme
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -103,6 +109,12 @@ class MainActivity : ComponentActivity() {
      *  permission, granted via Settings rather than a runtime dialog (see requestFileAccess). */
     private val legacyFileAccessPermissionLauncher =
         registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { }
+
+    /** Result is ignored — whatever actually got deleted (the user can cancel or partially
+     *  approve a batch) shows up via PhotoRepository's content observer regardless, which is
+     *  what actually drives the Mac-side refresh. See ACTION_DELETE_PHOTOS. */
+    private val photoDeleteIntentSenderLauncher =
+        registerForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { }
 
     private val screenCapturePermissionLauncher =
         registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -258,18 +270,52 @@ class MainActivity : ComponentActivity() {
         handleIntent(intent)
     }
 
-    /** The Mac-initiated "start mirroring" request arrives in SyncForegroundService (a
-     *  background service), but MediaProjection consent can only be requested from a
-     *  foreground Activity — this is what brings the phone's screen to the front for that. */
+    /** The Mac-initiated "start mirroring"/"delete photos" requests arrive in
+     *  SyncForegroundService (a background service), but both MediaProjection consent and
+     *  MediaStore's delete consent can only be requested from a foreground Activity — this is
+     *  what brings the phone's screen to the front for either. */
     private fun handleIntent(intent: Intent?) {
-        if (intent?.action == ACTION_REQUEST_MIRROR_PERMISSION) {
-            requestScreenCapturePermission()
+        when (intent?.action) {
+            ACTION_REQUEST_MIRROR_PERMISSION -> requestScreenCapturePermission()
+            ACTION_DELETE_PHOTOS -> {
+                val ids = intent.getStringArrayListExtra(EXTRA_PHOTO_IDS)
+                if (!ids.isNullOrEmpty()) requestPhotoDeletion(ids)
+            }
         }
     }
 
     private fun requestScreenCapturePermission() {
         val projectionManager = getSystemService(MediaProjectionManager::class.java)
         screenCapturePermissionLauncher.launch(projectionManager.createScreenCaptureIntent())
+    }
+
+    /** Deleting a `MediaStore` item this app didn't create itself needs the user's consent.
+     *  API 30+ batches that into a single system dialog covering the whole selection
+     *  ([MediaStore.createDeleteRequest]); below that, [android.provider.MediaStore] has no
+     *  batch-consent API, so this falls back to a best-effort direct delete per item (works on
+     *  API 26–28's pre-scoped-storage model; on API 29 a photo this app doesn't own will just
+     *  throw and get silently skipped rather than opening a consent dialog per photo — a
+     *  narrow, aging OS slice not worth the extra one-at-a-time IntentSender plumbing here).
+     */
+    private fun requestPhotoDeletion(ids: List<String>) {
+        val uris = ids.mapNotNull { id ->
+            id.toLongOrNull()?.let { ContentUris.withAppendedId(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, it) }
+        }
+        if (uris.isEmpty()) return
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            val pendingIntent = MediaStore.createDeleteRequest(contentResolver, uris)
+            photoDeleteIntentSenderLauncher.launch(IntentSenderRequest.Builder(pendingIntent.intentSender).build())
+        } else {
+            lifecycleScope.launch(Dispatchers.IO) {
+                for (uri in uris) {
+                    try {
+                        contentResolver.delete(uri, null, null)
+                    } catch (e: SecurityException) {
+                        // No consent path below API 30 — skip; see doc comment above.
+                    }
+                }
+            }
+        }
     }
 
     private fun requestCameraAndScan() {
@@ -426,5 +472,7 @@ class MainActivity : ComponentActivity() {
 
     companion object {
         const val ACTION_REQUEST_MIRROR_PERMISSION = "com.linktomac.action.REQUEST_MIRROR_PERMISSION"
+        const val ACTION_DELETE_PHOTOS = "com.linktomac.action.DELETE_PHOTOS"
+        const val EXTRA_PHOTO_IDS = "com.linktomac.extra.PHOTO_IDS"
     }
 }

@@ -14,6 +14,20 @@ pub async fn list_notes(state: tauri::State<'_, Arc<AppState>>) -> Result<Vec<No
 }
 
 #[tauri::command]
+pub async fn list_pending_note_mutation_ids(state: tauri::State<'_, Arc<AppState>>) -> Result<Vec<String>, String> {
+    Ok(state.pending_note_mutations.lock().await.ids())
+}
+
+/// Tells the frontend which synced notes currently have something queued (an edit/pin/delete
+/// made while the phone was unreachable) — that's what drives the "unsynced" icon for a
+/// phone-origin note, same signal `dispatch::sync_settings::reconcile_note_mutations` clears once
+/// a reconnect actually replays the queue.
+async fn emit_pending_mutation_ids(state: &AppState) {
+    let ids = state.pending_note_mutations.lock().await.ids();
+    let _ = state.app_handle.emit("pending-note-mutations-updated", ids);
+}
+
+#[tauri::command]
 pub async fn list_local_notes(state: tauri::State<'_, Arc<AppState>>) -> Result<Vec<PendingNote>, String> {
     Ok(state.local_notes.lock().await.pending())
 }
@@ -108,6 +122,7 @@ pub async fn update_note(
             .lock()
             .await
             .queue_update(id, title, body, image_base64);
+        emit_pending_mutation_ids(&state).await;
     }
     Ok(())
 }
@@ -143,6 +158,7 @@ pub async fn delete_note(state: tauri::State<'_, Arc<AppState>>, id: String) -> 
         .is_err()
     {
         state.pending_note_mutations.lock().await.queue_delete(id);
+        emit_pending_mutation_ids(&state).await;
     }
     Ok(())
 }
@@ -179,6 +195,7 @@ pub async fn set_note_pinned(state: tauri::State<'_, Arc<AppState>>, id: String,
         .is_err()
     {
         state.pending_note_mutations.lock().await.queue_set_pinned(id, is_pinned);
+        emit_pending_mutation_ids(&state).await;
     }
     Ok(())
 }

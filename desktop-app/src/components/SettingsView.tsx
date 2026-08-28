@@ -196,7 +196,7 @@ function SettingsGroup({ title, children }: { title: string; children: React.Rea
   );
 }
 
-function ToggleRow({
+export function ToggleRow({
   label,
   detail,
   checked,

@@ -21,6 +21,26 @@ pub async fn update_settings(state: tauri::State<'_, Arc<AppState>>, settings: A
         .map_err(|e| e.to_string())
 }
 
+/// Reads the live in-memory state (`AppState.discovery_tx`), not the persisted setting — they're
+/// kept in sync by `set_discovery_enabled` below, but the live value is what's actually true of
+/// the listening socket right now.
+#[tauri::command]
+pub async fn get_discovery_enabled(state: tauri::State<'_, Arc<AppState>>) -> Result<bool, String> {
+    Ok(crate::net::server::is_discovery_enabled(&state).await)
+}
+
+/// Flips the live on/off switch (mDNS advertising + listening socket — see
+/// `net::server::set_discovery_enabled`'s doc comment) and persists the choice so it survives a
+/// restart.
+#[tauri::command]
+pub async fn set_discovery_enabled(state: tauri::State<'_, Arc<AppState>>, enabled: bool) -> Result<(), String> {
+    crate::net::server::set_discovery_enabled(&state, enabled).await;
+    let mut settings = state.settings.lock().await;
+    let mut current = settings.get();
+    current.discovery_enabled = enabled;
+    settings.update(current).map_err(|e| e.to_string())
+}
+
 /// Launch-at-login is OS-managed state (a login-item registration), not part of our own
 /// settings.json — the OS is the source of truth, so this reads it fresh rather than caching.
 #[tauri::command]

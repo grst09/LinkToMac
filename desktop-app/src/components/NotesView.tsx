@@ -5,6 +5,7 @@ import {
   Trash2,
   FileText,
   Search as SearchIcon,
+  Cloud,
   CloudOff,
   RefreshCw,
   Pin,
@@ -256,7 +257,7 @@ function findMatches(blocks: NoteBlock[], query: string): Match[] {
 }
 
 export function NotesView() {
-  const { notes, pending, loaded, lastError } = useNotesStore();
+  const { notes, pending, loaded, lastError, pendingMutationIds } = useNotesStore();
   const notesEnabled = useSyncSettingsStore((s) => s.settings.notesEnabled);
   const [searchText, setSearchText] = useState("");
   const [listWidth, setListWidth] = useState(320);
@@ -269,13 +270,15 @@ export function NotesView() {
     initNotesListeners();
   }, []);
 
+  // A synced (phone-origin) note counts as "pending"/unsynced too when it has a queued mutation
+  // from an edit made while the phone was unreachable — not just the always-local `pending` array.
   const combined: NoteRowItem[] = useMemo(() => {
     const items = [
       ...pending.map((n) => ({ ...n, pending: true })),
-      ...notes.map((n) => ({ ...n, pending: false })),
+      ...notes.map((n) => ({ ...n, pending: pendingMutationIds.has(n.id) })),
     ];
     return items.sort((a, b) => b.updatedAt - a.updatedAt);
-  }, [notes, pending]);
+  }, [notes, pending, pendingMutationIds]);
 
   // A freshly-created draft has no id until the create round-trips and a `notes-updated` /
   // `local-notes-updated` event lands. Once it shows up (an id we didn't have before we started
@@ -400,7 +403,6 @@ export function NotesView() {
               initialTitle=""
               initialBody=""
               initialImage={null}
-              pending={false}
               canEdit
               updatedAt={null}
             />
@@ -412,7 +414,6 @@ export function NotesView() {
               initialTitle={selected.title}
               initialBody={selected.body}
               initialImage={selected.imageBase64 ?? null}
-              pending={selected.pending}
               canEdit={canEdit(selected, notesEnabled)}
               updatedAt={selected.updatedAt}
             />
@@ -525,14 +526,16 @@ function NoteCard({
 
           <span className="mt-0.5 flex flex-wrap items-center gap-1.5 text-[11px] text-neutral-400 dark:text-neutral-500">
             {relativeTime(note.updatedAt)}
-            {note.pending && (
-              <span
-                title="Not synced with your Mac's phone yet"
-                className="shrink-0 rounded-full bg-orange-500/10 px-1.5 py-0.5 font-medium text-orange-600 dark:text-orange-400"
-              >
-                Not synced
-              </span>
-            )}
+            <span
+              title={note.pending ? "Not synced with your phone yet" : "Synced with your phone"}
+              className="flex shrink-0 items-center"
+            >
+              {note.pending ? (
+                <CloudOff className="h-3 w-3 text-orange-500 dark:text-orange-400" />
+              ) : (
+                <Cloud className="h-3 w-3 text-neutral-300 dark:text-neutral-600" />
+              )}
+            </span>
           </span>
         </div>
       </div>
@@ -569,7 +572,6 @@ function NoteEditPanel({
   initialTitle,
   initialBody,
   initialImage,
-  pending,
   canEdit,
   updatedAt,
 }: {
@@ -578,7 +580,6 @@ function NoteEditPanel({
   initialTitle: string;
   initialBody: string;
   initialImage: string | null;
-  pending: boolean;
   canEdit: boolean;
   updatedAt: number | null;
 }) {
@@ -643,9 +644,14 @@ function NoteEditPanel({
     const before = target.text.slice(0, caret);
     const after = target.text.slice(caret);
     const afterBlock: TextBlock = { type: "text", id: newBlockId(), text: after };
+    // Drop the leading half entirely when it's empty (e.g. pasting into a fresh note, or at the
+    // very start of a line) rather than keeping it as a zero-content block — otherwise it sits
+    // there as a second, redundant "Start typing…" placeholder right above the image, alongside
+    // the real one in `afterBlock` below.
+    const beforeBlocks: NoteBlock[] = before ? [{ ...target, text: before }] : [];
     const next: NoteBlock[] = [
       ...blocks.slice(0, targetIdx),
-      { ...target, text: before },
+      ...beforeBlocks,
       { type: "image", id: newBlockId(), dataUrl },
       afterBlock,
       ...blocks.slice(targetIdx + 1),
@@ -834,13 +840,6 @@ function NoteEditPanel({
           imageDragOver ? "ring-2 ring-inset ring-yellow-500/50" : ""
         }`}
       >
-        {pending && (
-          <p className="flex items-center gap-1.5 text-xs text-orange-600 dark:text-orange-400">
-            <CloudOff className="h-3 w-3 shrink-0" />
-            Not synced with your phone yet — will sync once Notes sync is back on.
-          </p>
-        )}
-
         {imageError && <p className="text-xs text-red-500 dark:text-red-400">{imageError}</p>}
 
         <div className="-mt-1 flex items-center justify-between">
@@ -905,6 +904,12 @@ function NoteEditPanel({
                 }}
                 onChangeText={(text) => updateTextBlock(block.id, text)}
                 onPasteImage={(file) => insertImageFile(file, block.id)}
+                // "Start typing…" only makes sense when this is the *only* block — i.e. the note
+                // is genuinely empty. An empty block that exists purely to hold the caret next to
+                // an image (there's always at least one, by construction — see `normalizeBlocks`)
+                // would otherwise show the same placeholder floating below real content, which
+                // reads as a leftover/duplicate prompt rather than an empty editor.
+                showPlaceholder={blocks.length === 1}
               />
             ),
           )}
@@ -971,6 +976,7 @@ function NoteTextBlock({
   onFocusBlock,
   onChangeText,
   onPasteImage,
+  showPlaceholder,
 }: {
   block: TextBlock;
   canEdit: boolean;
@@ -982,6 +988,7 @@ function NoteTextBlock({
   onFocusBlock: () => void;
   onChangeText: (text: string) => void;
   onPasteImage: (file: File | null | undefined) => void;
+  showPlaceholder: boolean;
 }) {
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const localMatches = useMemo(() => matches.filter((m) => m.blockId === block.id), [matches, block.id]);
@@ -1027,7 +1034,7 @@ function NoteTextBlock({
             onPasteImage(file);
           }
         }}
-        placeholder="Start typing…"
+        placeholder={showPlaceholder ? "Start typing…" : undefined}
         className={`block w-full resize-none overflow-hidden bg-transparent p-0 text-[14px] leading-relaxed placeholder:text-neutral-400 focus:outline-none disabled:opacity-60 ${
           blockShowsHighlights ? "text-transparent caret-neutral-800 dark:caret-neutral-200" : "text-neutral-800 dark:text-neutral-200"
         }`}

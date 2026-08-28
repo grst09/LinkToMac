@@ -269,6 +269,15 @@ pub struct PhotoFullPayload {
     pub mime_type: String,
 }
 
+/// No response payload — whatever actually gets deleted (the phone's consent dialog lets the
+/// user cancel or partially approve a batch) is picked up by the phone's own `PhotoRepository`
+/// content observer, which already drives a `photo.libraryChanged` reset-and-re-page. See
+/// `dispatch/photos.rs`'s `library_changed`.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhotoDeleteRequestPayload {
+    pub ids: Vec<String>,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DeviceStatusPayload {

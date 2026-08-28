@@ -1,12 +1,13 @@
 import { useEffect } from "react";
 import { AnimatePresence } from "framer-motion";
-import { X } from "lucide-react";
+import { Trash2, X } from "lucide-react";
 import { SectionHeader } from "./SectionHeader";
 import { AnimatedListRow } from "./AnimatedListRow";
 import { sectionMeta } from "../theme/sections";
 import { avatarColorClass, initials } from "../theme/avatarColor";
 import { relativeTime } from "../utils/relativeTime";
 import {
+  dismissAllNotifications,
   dismissNotification,
   initNotificationListeners,
   useNotificationsStore,
@@ -25,6 +26,17 @@ export function NotificationsView() {
       <SectionHeader
         section={sectionMeta("notifications")}
         subtitle={`${notifications.length} notification${notifications.length === 1 ? "" : "s"}`}
+        trailing={
+          notifications.length > 0 && (
+            <button
+              onClick={() => dismissAllNotifications()}
+              className="flex items-center gap-1 rounded-md border border-black/10 dark:border-white/15 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Clear All
+            </button>
+          )
+        }
       />
       <div className="flex-1 overflow-y-auto p-4">
         {!loaded ? null : notifications.length === 0 ? (

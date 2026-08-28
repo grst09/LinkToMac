@@ -38,6 +38,15 @@ export async function dismissNotification(id: string) {
   await invoke("dismiss_notification", { id });
 }
 
+/** Clears every notification at once — both the phone's copy (a `notification.dismiss` per id,
+ *  same as `dismissNotification`) and every native Notification Center banner in one call, via
+ *  `notify::remove_all` on the Rust side. Optimistic, same ordering as the single-dismiss case. */
+export async function dismissAllNotifications() {
+  if (useNotificationsStore.getState().notifications.length === 0) return;
+  useNotificationsStore.setState({ notifications: [] });
+  await invoke("dismiss_all_notifications");
+}
+
 let initialized = false;
 
 export function initNotificationListeners() {

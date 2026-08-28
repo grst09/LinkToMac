@@ -29,6 +29,13 @@ export const usePhotosStore = create<PhotosState>(() => ({
   fullImages: {},
 }));
 
+/** Same reset-and-re-page-from-0 the phone's own library-changed push already triggers
+ *  automatically — this just lets the user ask for it directly instead of waiting. The backend
+ *  emits `photos-reset` (already handled below) before the fresh page comes back. */
+export async function refreshPhotos() {
+  await invoke("refresh_photos");
+}
+
 export async function loadNextPage() {
   if (usePhotosStore.getState().isLoadingMore) return;
   usePhotosStore.setState({ isLoadingMore: true });
@@ -38,6 +45,18 @@ export async function loadNextPage() {
     // Rust-side already in flight or not connected — clear the optimistic flag we just set.
     usePhotosStore.setState({ isLoadingMore: false });
   }
+}
+
+/** No response event to wait on — see `PhotoDeleteRequestPayload`'s doc comment on the Rust
+ *  side. Optimistically drops the ids from the grid right away; if the user cancels the phone's
+ *  system consent dialog for some or all of them, the next `photos-reset`/`photos-appended`
+ *  cycle (driven by the phone's own content-observer-triggered `libraryChanged`) brings them
+ *  back — self-correcting rather than needing a real ack. */
+export async function deletePhotos(ids: string[]) {
+  usePhotosStore.setState((s) => ({
+    photos: s.photos.filter((p) => !ids.includes(p.id)),
+  }));
+  await invoke("delete_photos", { ids });
 }
 
 export async function requestPhotoFull(id: string) {

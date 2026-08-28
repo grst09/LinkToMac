@@ -1,6 +1,7 @@
 //! Handles the phone's `sync.settings` push and reconciles anything queued locally on the Mac
-//! (see `store/local_notes.rs`, `store/local_contacts.rs`, `store/pending_messages.rs`) the
-//! moment a category flips from off to on.
+//! (see `store/local_notes.rs`, `store/local_contacts.rs`, `store/pending_messages.rs`) whenever
+//! a category is enabled — every push while it's on, not just the moment it flips from off to on,
+//! since items can queue up purely from a disconnect while the toggle stayed on the whole time.
 //!
 //! Reconciliation always pushes queued items as brand-new phone-side records (`notes.create`,
 //! `contacts.create`) rather than trying to merge against whatever the phone's copy might have
@@ -19,25 +20,26 @@ use crate::protocol::envelope::{
 use crate::store::pending_note_mutations::PendingNoteMutation;
 
 pub async fn update(payload: SyncSettingsPayload, state: &std::sync::Arc<AppState>) {
-    let previous = *state.sync_settings.lock().await;
     *state.sync_settings.lock().await = payload;
     let _ = state.app_handle.emit("sync-settings-updated", payload);
 
-    if !previous.notes_enabled && payload.notes_enabled {
-        reconcile_notes(state).await;
-    }
-    // Unlike `reconcile_notes` above (which only matters right when the toggle flips on), any
-    // pin/delete queued while disconnected (see `store/pending_note_mutations.rs`) needs
-    // replaying every time the phone reconnects — which is the common case here, since the
-    // toggle is usually already on and this push is just the phone saying hello again (it's
-    // sent right after every reconnect, before anything else — see `SyncForegroundService.kt`).
+    // Gating this on the off→on *edge* used to mean a note/contact/message queued locally while
+    // merely disconnected (see `commands/notes.rs::create_note` etc. — that path queues on any
+    // `send_to_active` failure, toggle-off or not) would never get reconciled if the toggle was
+    // already on the whole time: the next `sync.settings` push (sent on every reconnect, before
+    // anything else — see `SyncForegroundService.kt`) has `previous == payload == enabled`, so
+    // the edge never fires and the item is stuck "not synced" forever despite the phone being
+    // right there. Each reconcile_* is a cheap no-op when its queue is empty, so it's safe to
+    // just run it on every push where the category is enabled — matching how
+    // `reconcile_note_mutations` already behaves below.
     if payload.notes_enabled {
+        reconcile_notes(state).await;
         reconcile_note_mutations(state).await;
     }
-    if !previous.contacts_enabled && payload.contacts_enabled {
+    if payload.contacts_enabled {
         reconcile_contacts(state).await;
     }
-    if !previous.calls_and_messages_enabled && payload.calls_and_messages_enabled {
+    if payload.calls_and_messages_enabled {
         reconcile_messages(state).await;
     }
 }
@@ -89,6 +91,8 @@ async fn reconcile_note_mutations(state: &std::sync::Arc<AppState>) {
         }
     }
     state.pending_note_mutations.lock().await.remove(&succeeded);
+    let ids = state.pending_note_mutations.lock().await.ids();
+    let _ = state.app_handle.emit("pending-note-mutations-updated", ids);
 }
 
 async fn reconcile_notes(state: &std::sync::Arc<AppState>) {

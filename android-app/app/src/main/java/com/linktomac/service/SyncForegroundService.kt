@@ -123,6 +123,22 @@ class SyncForegroundService : Service() {
                 }
             }
         }
+        connection.onPhotoDeleteRequested = { ids ->
+            if (appSettingsStore.photosSyncEnabled) {
+                // Same reasoning as onMirrorStartRequested below: deleting a MediaStore item the
+                // app didn't create itself needs user consent (MediaStore.createDeleteRequest on
+                // API 30+), which only a foreground Activity can present — see MainActivity's
+                // ACTION_DELETE_PHOTOS. Whatever actually ends up deleted is picked up by
+                // PhotoRepository's own content observer, which already drives the Mac's
+                // reset-and-re-page refresh — no separate result message needed here.
+                val intent = Intent(applicationContext, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+                    action = MainActivity.ACTION_DELETE_PHOTOS
+                    putStringArrayListExtra(MainActivity.EXTRA_PHOTO_IDS, ArrayList(ids))
+                }
+                startActivity(intent)
+            }
+        }
         connection.onMirrorStartRequested = {
             // MediaProjection permission can only be requested from a foreground Activity — no
             // way around bringing the phone's screen to the front for this, even though the
@@ -315,6 +331,14 @@ class SyncForegroundService : Service() {
         }
         connection.state.onEach { state ->
             if (!manuallyDisconnected) updateNotification(state)
+            if (state is ConnectionState.Failed) {
+                // An unexpected drop (Mac unreachable, network blip, etc.) — same "stop looking
+                // for connections until asked" posture as a manual disconnect: cancel the
+                // background discovery/reconnect loop instead of leaving it running indefinitely.
+                // ACTION_RECONNECT (or a fresh pairing) is what re-arms it.
+                discoveryJob?.cancel()
+                discoveryJob = null
+            }
             if (state is ConnectionState.Connected) {
                 // Sent before anything else so the Mac knows what's actually enabled before it
                 // sees any sync data arrive (or not) — see SyncCategory's doc comment.
@@ -394,11 +418,13 @@ class SyncForegroundService : Service() {
                 // stopForeground below ever runs.
                 manuallyDisconnected = true
                 discoveryJob?.cancel()
+                discoveryJob = null
                 connection.close()
                 ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
             }
             ACTION_FORGET -> {
                 discoveryJob?.cancel()
+                discoveryJob = null
                 connection.close()
                 pairedDeviceStore.clear()
                 manuallyDisconnected = false
@@ -560,8 +586,9 @@ class SyncForegroundService : Service() {
         val statusText = when (state) {
             is ConnectionState.Connected -> "Connected to ${state.macDeviceName}"
             is ConnectionState.Connecting -> "Connecting…"
-            is ConnectionState.Failed -> "Disconnected — ${state.message}"
-            ConnectionState.Idle -> "Waiting to pair"
+            // A background reconnect attempt failing isn't something worth alarming the user
+            // over in an ongoing notification — same neutral copy as never having connected.
+            is ConnectionState.Failed, ConnectionState.Idle -> "Waiting to pair"
         }
         val contentIntent = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),

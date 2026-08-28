@@ -7,6 +7,7 @@ export interface ClipboardEntry {
   text: string;
   source: "mac" | "android";
   timestamp: number;
+  isPinned: boolean;
 }
 
 interface ClipboardHistoryState {
@@ -26,6 +27,18 @@ export async function copyClipboardEntry(text: string) {
 export async function clearClipboardHistory() {
   await invoke("clear_clipboard_history");
   useClipboardHistoryStore.setState({ entries: [] });
+}
+
+/** Optimistic, then re-sorts locally (pinned-first) to match what the backend's `ordered()` will
+ *  emit right behind it — avoids a visible flash where the toggled row hasn't moved yet. */
+export async function setClipboardEntryPinned(id: string, pinned: boolean) {
+  useClipboardHistoryStore.setState((s) => {
+    const updated = s.entries.map((e) => (e.id === id ? { ...e, isPinned: pinned } : e));
+    const stillPinned = updated.filter((e) => e.isPinned);
+    const rest = updated.filter((e) => !e.isPinned);
+    return { entries: [...stillPinned, ...rest] };
+  });
+  await invoke("set_clipboard_entry_pinned", { id, pinned });
 }
 
 let initialized = false;

@@ -17,6 +17,7 @@ import QRCode from "qrcode";
 import { SectionHeader } from "./SectionHeader";
 import { StatCard } from "./StatCard";
 import { AnimatedListRow } from "./AnimatedListRow";
+import { ToggleRow } from "./SettingsView";
 import { sectionMeta } from "../theme/sections";
 import { useConnectionStore } from "../store/connection";
 import { requestSection } from "../store/navigation";
@@ -47,6 +48,23 @@ export function ThisDeviceView() {
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [devices, setDevices] = useState<PairedDeviceSummary[]>([]);
+  const [discoveryEnabled, setDiscoveryEnabled] = useState(true);
+
+  useEffect(() => {
+    invoke<boolean>("get_discovery_enabled").then(setDiscoveryEnabled);
+  }, []);
+
+  // Optimistic, like every other toggle in this app (see SettingsView's ToggleRow usages) —
+  // reverted if the backend call fails.
+  async function toggleDiscovery(enabled: boolean) {
+    setDiscoveryEnabled(enabled);
+    try {
+      await invoke("set_discovery_enabled", { enabled });
+    } catch (e) {
+      setDiscoveryEnabled(!enabled);
+      setError(String(e));
+    }
+  }
 
   const refreshDevices = useCallback(() => {
     invoke<PairedDeviceSummary[]>("list_paired_devices")
@@ -67,6 +85,11 @@ export function ThisDeviceView() {
   async function beginPairing() {
     setError(null);
     try {
+      // Pairing a new device needs an actual reachable listening socket — a QR code pointing at
+      // a closed port would just fail to connect with no clear reason why. Deliberately starting
+      // this flow is exactly the kind of "I want to be reachable right now" action discovery-off
+      // exists to gate, so turn it back on rather than leaving the user to guess.
+      if (!discoveryEnabled) await toggleDiscovery(true);
       const payload = await invoke<PairingQrPayload>("begin_pairing");
       const dataUrl = await QRCode.toDataURL(JSON.stringify(payload), {
         width: 220,
@@ -119,7 +142,20 @@ export function ThisDeviceView() {
           </div>
         )}
 
-        <HeroCard connected={connected} deviceName={deviceName} />
+        <HeroCard connected={connected} deviceName={deviceName} discoveryEnabled={discoveryEnabled} />
+
+        <div className="mt-6">
+          <ToggleRow
+            label="Discoverable"
+            detail={
+              discoveryEnabled
+                ? "Your Mac advertises itself on the network and accepts reconnections. Turn off when you don't want it reachable."
+                : "Off — your Mac isn't advertising itself and won't accept new connections, even from an already-paired phone."
+            }
+            checked={discoveryEnabled}
+            onChange={toggleDiscovery}
+          />
+        </div>
 
         <div className="mt-8">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-neutral-500 dark:text-neutral-400">
@@ -187,7 +223,15 @@ export function ThisDeviceView() {
   );
 }
 
-function HeroCard({ connected, deviceName }: { connected: boolean; deviceName: string | null }) {
+function HeroCard({
+  connected,
+  deviceName,
+  discoveryEnabled,
+}: {
+  connected: boolean;
+  deviceName: string | null;
+  discoveryEnabled: boolean;
+}) {
   return (
     <motion.div
       initial={{ opacity: 0, y: 4 }}
@@ -219,11 +263,13 @@ function HeroCard({ connected, deviceName }: { connected: boolean; deviceName: s
           }`}
         >
           <span className={`h-1.5 w-1.5 rounded-full ${connected ? "bg-emerald-500" : "bg-neutral-400"}`} />
-          {connected ? "Connected" : "Waiting to pair"}
+          {connected ? "Connected" : discoveryEnabled ? "Waiting to pair" : "Discovery off"}
         </p>
         {!connected && (
           <p className="mt-1 max-w-xs text-xs text-neutral-500 dark:text-neutral-400">
-            Pair a device below, or reconnect an already-paired phone by opening LinkToMac on it.
+            {discoveryEnabled
+              ? "Pair a device below, or reconnect an already-paired phone by opening LinkToMac on it."
+              : "Your Mac isn't reachable right now — turn Discoverable back on below to pair or reconnect."}
           </p>
         )}
       </div>

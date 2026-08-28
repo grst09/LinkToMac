@@ -39,10 +39,12 @@ pub async fn full(payload: PhotoFullPayload, state: &std::sync::Arc<AppState>) {
     let _ = state.app_handle.emit("photo-full", payload);
 }
 
-/// Hard reset, then immediately re-requests page 0 — matches the dispatcher-level handling in
-/// `ConnectionServer.dispatch` (invalidate + re-page is driven centrally, not left to the view).
-pub async fn library_changed(state: &std::sync::Arc<AppState>) {
-    tracing::info!("photo.libraryChanged: resetting and re-paging from 0");
+/// Hard reset, then immediately re-requests page 0. Shared by the phone-initiated
+/// `photo.libraryChanged` push (matches the dispatcher-level handling in
+/// `ConnectionServer.dispatch` — invalidate + re-page is driven centrally, not left to the view)
+/// and the Mac-initiated manual "Resync" button (`commands::refresh_photos`) — same reset-and-
+/// re-page-from-0 behavior either way, just a different trigger.
+pub async fn resync(state: &std::sync::Arc<AppState>) {
     state.photos.lock().await.reset();
     let _ = state.app_handle.emit("photos-reset", ());
     let _ = send_to_active(
@@ -51,4 +53,9 @@ pub async fn library_changed(state: &std::sync::Arc<AppState>) {
         &PhotoPageRequestPayload { offset: 0, limit: DEFAULT_PAGE_SIZE },
     )
     .await;
+}
+
+pub async fn library_changed(state: &std::sync::Arc<AppState>) {
+    tracing::info!("photo.libraryChanged: resetting and re-paging from 0");
+    resync(state).await;
 }

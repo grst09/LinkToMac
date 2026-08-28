@@ -30,24 +30,45 @@ pub struct ClipboardEntry {
     /// "mac" | "android" — which side this copy originated on.
     pub source: String,
     pub timestamp: f64,
+    #[serde(default)]
+    pub is_pinned: bool,
+}
+
+/// Pinned-first (each partition keeping its own newest-first order, which `history` is already
+/// stored in) — the view every command/event actually hands to the frontend. `history` itself
+/// stays in plain insertion order; this is computed on demand rather than maintained as the
+/// stored order, so pinning/unpinning is just a flag flip, not a re-sort of the source of truth.
+pub fn ordered(history: &[ClipboardEntry]) -> Vec<ClipboardEntry> {
+    let mut pinned: Vec<ClipboardEntry> = history.iter().filter(|e| e.is_pinned).cloned().collect();
+    let mut rest: Vec<ClipboardEntry> = history.iter().filter(|e| !e.is_pinned).cloned().collect();
+    pinned.append(&mut rest);
+    pinned
 }
 
 /// Records one accepted copy (already deduped against `clipboard_last_synced` by the caller)
-/// into the shared history and tells the frontend. Newest-first, capped at `MAX_HISTORY`.
+/// into the shared history and tells the frontend. Newest-first, capped at `MAX_HISTORY` — except
+/// pinned entries, which are exempt from that cap entirely (evicting the oldest *unpinned* entry
+/// instead), matching the point of pinning something: it shouldn't disappear into the stack.
 async fn record_history(state: &Arc<AppState>, text: String, source: &str) {
     let entry = ClipboardEntry {
         id: Uuid::new_v4().to_string(),
         text,
         source: source.to_string(),
         timestamp: now_millis(),
+        is_pinned: false,
     };
     let history = {
         let mut history = state.clipboard_history.lock().await;
         history.insert(0, entry);
-        history.truncate(MAX_HISTORY);
+        while history.len() > MAX_HISTORY {
+            let Some(idx) = history.iter().rposition(|e| !e.is_pinned) else {
+                break; // everything left is pinned — let it exceed the cap rather than evict a pin
+            };
+            history.remove(idx);
+        }
         history.clone()
     };
-    let _ = state.app_handle.emit("clipboard-history-updated", history);
+    let _ = state.app_handle.emit("clipboard-history-updated", ordered(&history));
 }
 
 /// Applies a `clipboard.update` received from the phone. Sets `clipboard_last_synced` *before*

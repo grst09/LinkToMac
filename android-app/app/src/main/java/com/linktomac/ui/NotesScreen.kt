@@ -9,6 +9,8 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,15 +20,20 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -35,8 +42,6 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -48,6 +53,7 @@ import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -55,13 +61,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.linktomac.net.NoteEntry
 import com.linktomac.storage.NoteStore
+import com.linktomac.ui.components.AppHeader
+import com.linktomac.ui.components.LinkCard
 import java.text.DateFormat
 import java.util.Date
-import kotlin.math.abs
 
 /**
  * Notes list + create/edit/delete, all local to the phone (see docs/PROTOCOL.md's Phase 8 notes
@@ -69,8 +78,10 @@ import kotlin.math.abs
  * caller can push a fresh `notes.sync` to the Mac — this screen doesn't touch [MacConnection]
  * itself, same separation PairingScreen keeps from SyncForegroundService.
  *
- * Visually modeled on Samsung Notes: a colorful two-column card grid with a pinned section,
- * search, and a FAB for new notes, rather than a plain list.
+ * A two-column card grid with a pinned section, search, and a FAB for new notes — restyled onto
+ * the app's shared design system (`AppHeader`, `LinkCard`, the brand-green + neutral palette from
+ * `ui/theme`) instead of the ad hoc pastel-per-card look it originally shipped with, which read as
+ * a different app bolted onto the rest of LinkToMac.
  */
 @Composable
 fun NotesScreen(noteStore: NoteStore, onChanged: () -> Unit, onSyncRequested: () -> Unit) {
@@ -137,34 +148,61 @@ fun NotesScreen(noteStore: NoteStore, onChanged: () -> Unit, onSyncRequested: ()
             Box(modifier = Modifier.fillMaxSize()) {
             Column(modifier = Modifier.fillMaxSize()) {
                 Row(
-                    modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     if (searchActive) {
-                        TextField(
-                            value = searchQuery,
-                            onValueChange = { searchQuery = it },
-                            modifier = Modifier.weight(1f),
-                            placeholder = { Text("Search notes") },
-                            singleLine = true,
-                            colors = TextFieldDefaults.colors(
-                                focusedIndicatorColor = Color.Transparent,
-                                unfocusedIndicatorColor = Color.Transparent,
-                                focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-                                unfocusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                        // Same pill-on-surfaceContainerHighest treatment as `StatusPill`/
+                        // `SlidingSegmentedControl` (see ui/components/Components.kt) rather than a
+                        // bare TextField, so search reads as part of the same design system.
+                        Row(
+                            modifier = Modifier
+                                .weight(1f)
+                                .clip(RoundedCornerShape(50))
+                                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                                .padding(start = 14.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                Icons.Filled.Search,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(18.dp)
                             )
-                        )
+                            TextField(
+                                value = searchQuery,
+                                onValueChange = { searchQuery = it },
+                                modifier = Modifier.weight(1f),
+                                placeholder = { Text("Search notes") },
+                                singleLine = true,
+                                colors = TextFieldDefaults.colors(
+                                    focusedIndicatorColor = Color.Transparent,
+                                    unfocusedIndicatorColor = Color.Transparent,
+                                    focusedContainerColor = Color.Transparent,
+                                    unfocusedContainerColor = Color.Transparent
+                                )
+                            )
+                        }
                         IconButton(onClick = { searchActive = false; searchQuery = "" }) {
                             Icon(Icons.Filled.Close, contentDescription = "Close search")
                         }
                     } else {
-                        Text("Notes", style = MaterialTheme.typography.headlineMedium, modifier = Modifier.weight(1f))
-                        IconButton(onClick = { searchActive = true }) {
-                            Icon(Icons.Filled.Search, contentDescription = "Search notes")
-                        }
-                        IconButton(onClick = onSyncRequested) {
-                            Icon(Icons.Filled.Sync, contentDescription = "Sync notes with Mac")
-                        }
+                        AppHeader(
+                            leadingIcon = Icons.AutoMirrored.Filled.Notes,
+                            title = "Notes",
+                            subtitle = "${notes.size} ${if (notes.size == 1) "note" else "notes"}",
+                            modifier = Modifier.weight(1f),
+                            trailing = {
+                                Row {
+                                    IconButton(onClick = { searchActive = true }) {
+                                        Icon(Icons.Filled.Search, contentDescription = "Search notes")
+                                    }
+                                    IconButton(onClick = onSyncRequested) {
+                                        Icon(Icons.Filled.Sync, contentDescription = "Sync notes with Mac")
+                                    }
+                                }
+                            }
+                        )
                     }
                 }
 
@@ -240,37 +278,35 @@ private fun SectionLabel(text: String) {
     )
 }
 
-/** A small fixed palette, indexed deterministically by note id — mimics Samsung Notes' colorful
- *  card grid without needing a synced "color" field (would mean a protocol change just for a
- *  cosmetic per-note property; deriving it from the id keeps the color stable across sessions
- *  and platforms without extra state). */
-private val cardPalette = listOf(
-    Color(0xFFFFF3B0), // pale yellow
-    Color(0xFFC8F4DE), // pale mint
-    Color(0xFFD6E4FF), // pale blue
-    Color(0xFFFFE0EC), // pale pink
-    Color(0xFFE6DBFF), // pale lavender
-    Color(0xFFFFE3C8) // pale peach
-)
-
-private fun cardColorFor(id: String): Color = cardPalette[abs(id.hashCode()) % cardPalette.size]
-
 @Composable
 private fun NoteCard(note: NoteEntry, onClick: () -> Unit) {
-    val background = cardColorFor(note.id)
-    Card(
-        onClick = onClick,
-        colors = CardDefaults.cardColors(containerColor = background),
-        shape = RoundedCornerShape(16.dp),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp),
-        modifier = Modifier.fillMaxWidth()
-    ) {
+    // The raw body can contain an inline `![](data:...)` image token — a many-KB string with no
+    // spaces, which crashes Compose's text layout if it's ever handed to a `Text` composable
+    // directly (see NoteBlocks.kt). `previewText` always has tokens stripped; `coverImage` pulls
+    // the first one out separately to show as an actual thumbnail instead.
+    val previewText = remember(note.body) { noteBodyPreviewText(note.body) }
+    val coverImageDataUrl = remember(note.body, note.imageBase64) { noteCoverImageDataUrl(note.body, note.imageBase64) }
+    val coverBitmap = remember(coverImageDataUrl) { coverImageDataUrl?.let(::decodeNoteImage) }
+
+    LinkCard(onClick = onClick, modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp)) {
+            if (coverBitmap != null) {
+                Image(
+                    bitmap = coverBitmap.asImageBitmap(),
+                    contentDescription = null,
+                    contentScale = ContentScale.Crop,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(90.dp)
+                        .clip(MaterialTheme.shapes.small)
+                )
+                Spacer(Modifier.height(8.dp))
+            }
             Row(verticalAlignment = Alignment.Top) {
                 Text(
                     note.title.ifBlank { "Untitled" },
                     style = MaterialTheme.typography.titleSmall,
-                    color = Color(0xFF1A1A1A),
+                    color = MaterialTheme.colorScheme.onSurface,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.weight(1f)
@@ -279,17 +315,17 @@ private fun NoteCard(note: NoteEntry, onClick: () -> Unit) {
                     Icon(
                         Icons.Filled.PushPin,
                         contentDescription = "Pinned",
-                        tint = Color(0xFF1A1A1A).copy(alpha = 0.6f),
+                        tint = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.size(14.dp)
                     )
                 }
             }
-            if (note.body.isNotBlank()) {
+            if (previewText.isNotBlank()) {
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    note.body,
+                    previewText,
                     style = MaterialTheme.typography.bodySmall,
-                    color = Color(0xFF1A1A1A).copy(alpha = 0.75f),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 5,
                     overflow = TextOverflow.Ellipsis
                 )
@@ -298,7 +334,7 @@ private fun NoteCard(note: NoteEntry, onClick: () -> Unit) {
             Text(
                 formatTimestamp(note.updatedAt),
                 style = MaterialTheme.typography.labelSmall,
-                color = Color(0xFF1A1A1A).copy(alpha = 0.5f)
+                color = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
     }
@@ -313,10 +349,15 @@ private fun NoteEditor(
     onTogglePin: (() -> Unit)?
 ) {
     var title by remember { mutableStateOf(existing?.title ?: "") }
-    var body by remember { mutableStateOf(existing?.body ?: "") }
+    // The body is a sequence of text/image blocks (see NoteBlocks.kt) rather than a single raw
+    // string, so an inline image synced from the Mac renders as an actual picture instead of a
+    // wall of base64 text — and so it doesn't crash Compose's text layout getting there.
+    var blocks by remember { mutableStateOf(initialNoteBlocksFor(existing?.body ?: "", existing?.imageBase64)) }
     var confirmingDelete by remember { mutableStateOf(false) }
-    val canSave = title.isNotBlank() || body.isNotBlank()
-    val goBack = { if (canSave) onSave(title.trim(), body.trim()) else onCancel() }
+    val canSave = title.isNotBlank() || blocks.any {
+        (it is NoteBlock.Text && it.text.isNotBlank()) || it is NoteBlock.Image
+    }
+    val goBack = { if (canSave) onSave(title.trim(), serializeNoteBlocks(blocks).trim()) else onCancel() }
 
     // Without this, the system Back button falls straight through to the Activity (nothing else
     // intercepts it — see MainActivity/NotesScreen, neither uses Navigation's back stack) and
@@ -362,19 +403,87 @@ private fun NoteEditor(
                 ),
                 modifier = Modifier.fillMaxWidth()
             )
-            OutlinedTextField(
-                value = body,
-                onValueChange = { body = it },
-                placeholder = { Text("Start typing…") },
-                textStyle = MaterialTheme.typography.bodyLarge,
-                colors = TextFieldDefaults.colors(
-                    focusedIndicatorColor = Color.Transparent,
-                    unfocusedIndicatorColor = Color.Transparent,
-                    focusedContainerColor = Color.Transparent,
-                    unfocusedContainerColor = Color.Transparent
-                ),
-                modifier = Modifier.fillMaxWidth().weight(1f)
-            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .weight(1f)
+                    .verticalScroll(rememberScrollState())
+            ) {
+                // "Start typing…" only makes sense when this is the only block — i.e. the note is
+                // genuinely empty. An empty block that exists purely to hold the caret next to an
+                // image (there's always at least one, by construction — see `normalizeNoteBlocks`)
+                // would otherwise show the same placeholder floating below real content.
+                val showPlaceholder = blocks.size == 1
+                blocks.forEach { block ->
+                    key(block.id) {
+                        when (block) {
+                            is NoteBlock.Image -> {
+                                val bitmap = remember(block.dataUrl) { decodeNoteImage(block.dataUrl) }
+                                if (bitmap != null) {
+                                    Box(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .padding(vertical = 6.dp)
+                                    ) {
+                                        Image(
+                                            bitmap = bitmap.asImageBitmap(),
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .heightIn(max = 260.dp)
+                                                .clip(MaterialTheme.shapes.medium)
+                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .align(Alignment.TopEnd)
+                                                .padding(8.dp)
+                                                .size(32.dp)
+                                                .clip(CircleShape)
+                                                .background(Color.Black.copy(alpha = 0.5f)),
+                                            contentAlignment = Alignment.Center
+                                        ) {
+                                            IconButton(
+                                                onClick = {
+                                                    blocks = normalizeNoteBlocks(blocks.filterNot { it.id == block.id })
+                                                },
+                                                modifier = Modifier.size(32.dp)
+                                            ) {
+                                                Icon(
+                                                    Icons.Filled.Close,
+                                                    contentDescription = "Remove image",
+                                                    tint = Color.White
+                                                )
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                            is NoteBlock.Text -> {
+                                OutlinedTextField(
+                                    value = block.text,
+                                    onValueChange = { newText ->
+                                        blocks = blocks.map { b ->
+                                            if (b.id == block.id && b is NoteBlock.Text) b.copy(text = newText) else b
+                                        }
+                                    },
+                                    placeholder = if (showPlaceholder) {
+                                        { Text("Start typing…") }
+                                    } else null,
+                                    textStyle = MaterialTheme.typography.bodyLarge,
+                                    colors = TextFieldDefaults.colors(
+                                        focusedIndicatorColor = Color.Transparent,
+                                        unfocusedIndicatorColor = Color.Transparent,
+                                        focusedContainerColor = Color.Transparent,
+                                        unfocusedContainerColor = Color.Transparent
+                                    ),
+                                    modifier = Modifier.fillMaxWidth()
+                                )
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 

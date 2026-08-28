@@ -15,7 +15,7 @@ use mdns_sd::{ServiceDaemon, ServiceInfo};
 use serde::Serialize;
 use tauri::Emitter;
 use tokio::net::{TcpListener, TcpStream};
-use tokio::sync::Mutex;
+use tokio::sync::{watch, Mutex};
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::WebSocketStream;
 
@@ -92,7 +92,14 @@ pub struct AppState {
     /// Source of the `id` each `ActiveConnection` is tagged with — see that struct's doc comment.
     next_connection_id: std::sync::atomic::AtomicU64,
     pub app_handle: tauri::AppHandle,
-    _mdns: ServiceDaemon,
+    /// `None` when discovery is off — see `discovery_tx`'s doc comment and `set_discovery_enabled`
+    /// below (the free function, called by the `set_discovery_enabled` Tauri command).
+    mdns: Mutex<Option<ServiceDaemon>>,
+    /// Live on/off switch for discoverability — `run`'s accept loop watches this to decide
+    /// whether to have a listening socket open at all, and `set_discovery_enabled` flips it (and
+    /// starts/stops `mdns` to match). A plain bool behind a lock would work too, but `watch` also
+    /// wakes `run`'s loop immediately on a toggle instead of needing to poll.
+    discovery_tx: watch::Sender<bool>,
 }
 
 impl AppState {
@@ -107,7 +114,13 @@ impl AppState {
         pending_note_mutations: PendingNoteMutationsStore,
         app_handle: tauri::AppHandle,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mdns = start_mdns(&identity)?;
+        let discovery_enabled = settings.get().discovery_enabled;
+        // Preserves the pre-existing behavior exactly when enabled (the default, so every
+        // existing install and first-run pairing sees no change) — a failure here still fails
+        // startup outright, same as before this setting existed. Only reachable with `false` if
+        // the user has explicitly turned discovery off in a previous run.
+        let mdns = if discovery_enabled { Some(start_mdns(&identity)?) } else { None };
+        let (discovery_tx, _) = watch::channel(discovery_enabled);
         Ok(Self {
             identity,
             paired_devices: Mutex::new(paired_devices),
@@ -133,7 +146,8 @@ impl AppState {
             pending_note_mutations: Mutex::new(pending_note_mutations),
             next_connection_id: std::sync::atomic::AtomicU64::new(0),
             app_handle,
-            _mdns: mdns,
+            mdns: Mutex::new(mdns),
+            discovery_tx,
         })
     }
 }
@@ -294,18 +308,69 @@ fn local_device_name() -> String {
         .unwrap_or_else(|| "This computer".to_string())
 }
 
+/// Live-toggled by the `set_discovery_enabled` Tauri command (see `commands/settings.rs`) — a
+/// security-motivated off switch. Off means no mDNS advertisement *and* no open listening socket
+/// at all, not just "reject unpaired connections" — nothing on the network can even tell this
+/// port is alive. Doesn't touch an already-established connection; it only stops the Mac from
+/// being reachable for a *new* one, so an active session keeps running until it ends on its own
+/// or the user explicitly disconnects.
+pub async fn set_discovery_enabled(state: &Arc<AppState>, enabled: bool) {
+    state.discovery_tx.send_replace(enabled);
+    let mut guard = state.mdns.lock().await;
+    if enabled {
+        if guard.is_none() {
+            match start_mdns(&state.identity) {
+                Ok(daemon) => *guard = Some(daemon),
+                Err(e) => tracing::warn!("failed to start mdns advertising: {}", e),
+            }
+        }
+    } else if let Some(daemon) = guard.take() {
+        let _ = daemon.shutdown();
+    }
+}
+
+pub async fn is_discovery_enabled(state: &Arc<AppState>) -> bool {
+    *state.discovery_tx.borrow()
+}
+
+/// Outer loop waits here (no listening socket at all) whenever discovery is off; the inner loop
+/// binds and accepts as before while it's on, and tears the socket down the moment it's flipped
+/// off rather than merely ignoring new connections — see `set_discovery_enabled`.
 pub async fn run(state: Arc<AppState>) -> std::io::Result<()> {
-    let listener = TcpListener::bind(("0.0.0.0", PORT)).await?;
-    tracing::info!("WebSocket server listening on 0.0.0.0:{}", PORT);
+    let mut discovery_rx = state.discovery_tx.subscribe();
 
     loop {
-        let (stream, addr) = listener.accept().await?;
-        let state = Arc::clone(&state);
-        tokio::spawn(async move {
-            if let Err(e) = handle_connection(stream, addr, state).await {
-                tracing::warn!("connection {} ended: {}", addr, e);
+        while !*discovery_rx.borrow_and_update() {
+            if discovery_rx.changed().await.is_err() {
+                return Ok(());
             }
-        });
+        }
+
+        let listener = TcpListener::bind(("0.0.0.0", PORT)).await?;
+        tracing::info!("WebSocket server listening on 0.0.0.0:{}", PORT);
+
+        loop {
+            tokio::select! {
+                accepted = listener.accept() => {
+                    let (stream, addr) = accepted?;
+                    let state = Arc::clone(&state);
+                    tokio::spawn(async move {
+                        if let Err(e) = handle_connection(stream, addr, state).await {
+                            tracing::warn!("connection {} ended: {}", addr, e);
+                        }
+                    });
+                }
+                changed = discovery_rx.changed() => {
+                    if changed.is_err() {
+                        return Ok(());
+                    }
+                    if !*discovery_rx.borrow() {
+                        tracing::info!("discovery disabled: closing listening socket on port {}", PORT);
+                        break;
+                    }
+                }
+            }
+        }
     }
 }
 

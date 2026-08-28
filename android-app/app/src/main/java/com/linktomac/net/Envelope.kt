@@ -225,6 +225,15 @@ data class PhotoFullPayload(
     val mimeType: String
 )
 
+/** No `photo.deleteResult` response — whatever actually gets deleted (the user may cancel the
+ *  system consent dialog for some or all of a batch) is picked up by the existing
+ *  `PhotoRepository.observe` content-observer, which already triggers `sendPhotoLibraryChanged`
+ *  on any library change and drives the Mac's reset-and-re-page-from-0 flow. */
+@Serializable
+data class PhotoDeleteRequestPayload(
+    val ids: List<String>
+)
+
 @Serializable
 data class DeviceStatusPayload(
     val batteryPercent: Int,

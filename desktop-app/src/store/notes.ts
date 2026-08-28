@@ -32,6 +32,10 @@ interface NotesState {
   pending: PendingNote[];
   loaded: boolean;
   lastError: string | null;
+  /** Ids of synced (phone-origin) notes with an edit/pin/delete queued because the phone wasn't
+   *  reachable when it was made — see `pending_note_mutations.rs`. Cleared for an id once
+   *  `dispatch::sync_settings::reconcile_note_mutations` actually replays it on reconnect. */
+  pendingMutationIds: Set<string>;
 }
 
 export const useNotesStore = create<NotesState>(() => ({
@@ -39,6 +43,7 @@ export const useNotesStore = create<NotesState>(() => ({
   pending: [],
   loaded: false,
   lastError: null,
+  pendingMutationIds: new Set(),
 }));
 
 export async function refreshNotes() {
@@ -135,12 +140,20 @@ export function initNotesListeners() {
     useNotesStore.setState({ pending });
   });
 
+  invoke<string[]>("list_pending_note_mutation_ids").then((ids) => {
+    useNotesStore.setState({ pendingMutationIds: new Set(ids) });
+  });
+
   listen<Note[]>("notes-updated", (event) => {
     useNotesStore.setState({ notes: event.payload, loaded: true });
   });
 
   listen<PendingNote[]>("local-notes-updated", (event) => {
     useNotesStore.setState({ pending: event.payload });
+  });
+
+  listen<string[]>("pending-note-mutations-updated", (event) => {
+    useNotesStore.setState({ pendingMutationIds: new Set(event.payload) });
   });
 
   listen<string>("notes-error", (event) => {

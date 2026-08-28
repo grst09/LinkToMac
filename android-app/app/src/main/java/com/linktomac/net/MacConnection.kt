@@ -71,6 +71,7 @@ class MacConnection(
     var onSmsSendRequested: ((address: String, body: String) -> Unit)? = null
     var onPhotoPageRequested: ((offset: Int, limit: Int) -> Unit)? = null
     var onPhotoFullRequested: ((id: String) -> Unit)? = null
+    var onPhotoDeleteRequested: ((ids: List<String>) -> Unit)? = null
     var onMirrorStartRequested: (() -> Unit)? = null
     var onMirrorStopRequested: (() -> Unit)? = null
     var onMirrorTapRequested: ((x: Double, y: Double) -> Unit)? = null
@@ -223,6 +224,10 @@ class MacConnection(
                 "photo.fullRequest" -> {
                     val payload = json.decodeFromJsonElement<PhotoFullRequestPayload>(envelope.payload)
                     onPhotoFullRequested?.invoke(payload.id)
+                }
+                "photo.deleteRequest" -> {
+                    val payload = json.decodeFromJsonElement<PhotoDeleteRequestPayload>(envelope.payload)
+                    onPhotoDeleteRequested?.invoke(payload.ids)
                 }
                 "mirror.start" -> onMirrorStartRequested?.invoke()
                 "mirror.stop" -> onMirrorStopRequested?.invoke()

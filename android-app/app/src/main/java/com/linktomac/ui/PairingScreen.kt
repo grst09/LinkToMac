@@ -343,7 +343,8 @@ private fun StatusPill(paired: Boolean, connectionState: ConnectionState) {
         !paired -> "Not Paired" to colors.onSurfaceVariant
         connectionState is ConnectionState.Connected -> "Connected to ${connectionState.macDeviceName}" to colors.primary
         connectionState is ConnectionState.Connecting -> "Connecting…" to colors.onSurfaceVariant
-        connectionState is ConnectionState.Failed -> "Disconnected" to colors.error
+        // A paired device's background reconnect attempt failing reads the same as just being
+        // at rest, not connected — see pairedStatusText's doc comment.
         else -> "Not Connected" to colors.onSurfaceVariant
     }
     val pulsing = connectionState is ConnectionState.Connecting
@@ -552,16 +553,17 @@ private fun PermissionCard(
     }
 }
 
+/** A background reconnect attempt that didn't pan out reads the same as never having connected —
+ *  see `SyncForegroundService`'s `connection.state.onEach` handler, which stops retrying the
+ *  moment this happens rather than treating it as an ongoing error to keep surfacing. */
 private fun pairedStatusText(state: ConnectionState): String = when (state) {
     is ConnectionState.Connected -> "Connected"
     ConnectionState.Connecting -> "Connecting…"
-    is ConnectionState.Failed -> "Disconnected — ${state.message}"
-    ConnectionState.Idle -> "Not connected"
+    is ConnectionState.Failed, ConnectionState.Idle -> "Not connected"
 }
 
 private fun pairedStatusColor(state: ConnectionState, colors: ColorScheme): Color = when (state) {
     is ConnectionState.Connected -> colors.primary
     ConnectionState.Connecting -> colors.onSurfaceVariant
-    is ConnectionState.Failed -> colors.error
-    ConnectionState.Idle -> colors.onSurfaceVariant
+    is ConnectionState.Failed, ConnectionState.Idle -> colors.onSurfaceVariant
 }

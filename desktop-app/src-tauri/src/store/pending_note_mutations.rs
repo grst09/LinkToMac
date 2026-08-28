@@ -80,6 +80,12 @@ impl PendingNoteMutationsStore {
         self.data.clone()
     }
 
+    /// Just the note ids with something queued — what the frontend actually needs to show an
+    /// "unsynced" indicator; it has no use for the mutation contents themselves.
+    pub fn ids(&self) -> Vec<String> {
+        self.data.iter().map(|m| m.note_id().to_string()).collect()
+    }
+
     fn is_deleting(&self, id: &str) -> bool {
         self.data
             .iter()

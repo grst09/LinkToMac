@@ -1,11 +1,30 @@
 use std::sync::Arc;
 
-use crate::clipboard::ClipboardEntry;
+use tauri::Emitter;
+
+use crate::clipboard::{ordered, ClipboardEntry};
 use crate::net::server::AppState;
 
 #[tauri::command]
 pub async fn list_clipboard_history(state: tauri::State<'_, Arc<AppState>>) -> Result<Vec<ClipboardEntry>, String> {
-    Ok(state.clipboard_history.lock().await.clone())
+    Ok(ordered(&state.clipboard_history.lock().await))
+}
+
+#[tauri::command]
+pub async fn set_clipboard_entry_pinned(
+    state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+    pinned: bool,
+) -> Result<(), String> {
+    let history = {
+        let mut history = state.clipboard_history.lock().await;
+        if let Some(entry) = history.iter_mut().find(|e| e.id == id) {
+            entry.is_pinned = pinned;
+        }
+        history.clone()
+    };
+    let _ = state.app_handle.emit("clipboard-history-updated", ordered(&history));
+    Ok(())
 }
 
 /// Re-copies an old history entry back onto the Mac's system clipboard — a "copy again" action.
