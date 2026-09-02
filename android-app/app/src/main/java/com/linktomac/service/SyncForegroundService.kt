@@ -330,7 +330,21 @@ class SyncForegroundService : Service() {
             }
         }
         connection.state.onEach { state ->
-            if (!manuallyDisconnected) updateNotification(state)
+            if (!manuallyDisconnected) {
+                when (state) {
+                    // Actively connected or trying to — worth an ongoing notification, and
+                    // required by Android to keep running as a foreground service at all.
+                    is ConnectionState.Connected, ConnectionState.Connecting ->
+                        startForeground(NOTIFICATION_ID, buildNotification(state))
+                    // Disconnected, or never connected — no ongoing notification. This is a
+                    // deliberate trade-off: dropping out of the foreground state here means a
+                    // paired-but-unreachable phone won't keep silently retrying in the
+                    // background either (Android doesn't let a plain background Service run
+                    // reliably) — reopening the app (or ACTION_RECONNECT) is what tries again.
+                    is ConnectionState.Failed, ConnectionState.Idle ->
+                        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+                }
+            }
             if (state is ConnectionState.Failed) {
                 // An unexpected drop (Mac unreachable, network blip, etc.) — same "stop looking
                 // for connections until asked" posture as a manual disconnect: cancel the
@@ -574,11 +588,6 @@ class SyncForegroundService : Service() {
         return prefs.getString("device_id", null) ?: UUID.randomUUID().toString().also {
             prefs.edit().putString("device_id", it).apply()
         }
-    }
-
-    private fun updateNotification(state: ConnectionState) {
-        val manager = getSystemService(NotificationManager::class.java)
-        manager.notify(NOTIFICATION_ID, buildNotification(state))
     }
 
     private fun buildNotification(state: ConnectionState): Notification {

@@ -122,9 +122,18 @@ fun PairingScreen(
     BackHandler(enabled = showSyncOptions) { showSyncOptions = false }
 
     LaunchedEffect(Unit) {
-        onStartService()
+        // Only proactively start the foreground service (and its persistent "Waiting to pair"
+        // notification) when there's an existing pairing to reconnect to. For a never-paired
+        // install, starting it here would put that notification up the moment this screen opens
+        // even though there's nothing to reconnect to yet — the service starts itself instead,
+        // right when the user actually scans a QR code (see `onScanRequested` /
+        // `SyncForegroundService.pair`), so the notification only appears once pairing is
+        // genuinely in progress.
+        if (paired) onStartService()
         // The foreground service's onCreate() runs asynchronously after startForegroundService()
-        // returns, so its connection StateFlow isn't available on the same frame.
+        // returns, so its connection StateFlow isn't available on the same frame. This also
+        // covers the not-yet-paired case above: it keeps polling until the scan-triggered
+        // `pair()` call starts the service on its own.
         while (SyncForegroundService.connectionState() == null) {
             delay(50)
         }
