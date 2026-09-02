@@ -41,7 +41,7 @@ export interface SectionMeta {
 
 // Tailwind's scanner needs literal class strings (not template-interpolated ones) to include
 // them in the build, so each accent is spelled out in full rather than generated from a hue name.
-const ACCENTS = {
+export const ACCENTS = {
   orange: {
     text: "text-orange-500 dark:text-orange-400",
     bg: "bg-orange-500/10 dark:bg-orange-400/10",
@@ -76,6 +76,11 @@ const ACCENTS = {
     text: "text-amber-500 dark:text-amber-400",
     bg: "bg-amber-500/10 dark:bg-amber-400/10",
     ring: "ring-amber-500/20",
+  },
+  green: {
+    text: "text-green-500 dark:text-green-400",
+    bg: "bg-green-500/10 dark:bg-green-400/10",
+    ring: "ring-green-500/20",
   },
   cyan: {
     text: "text-cyan-500 dark:text-cyan-400",

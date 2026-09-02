@@ -44,4 +44,5 @@ arboard = { version = "3.6.1", default-features = false }
 tauri-plugin-notification = "2.3.3"
 openh264 = "0.9.8"
 tauri-plugin-autostart = "2"
+tauri-plugin-shell = "2.3.5"
 

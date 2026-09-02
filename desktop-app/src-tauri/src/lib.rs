@@ -10,6 +10,7 @@ mod notify;
 mod photos;
 mod protocol;
 mod store;
+mod whatsapp;
 
 use std::sync::Arc;
 
@@ -35,6 +36,7 @@ pub fn run() {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
         ))
+        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             net::server::begin_pairing,
             net::server::list_paired_devices,
@@ -100,6 +102,17 @@ pub fn run() {
             commands::copy_clipboard_entry,
             commands::clear_clipboard_history,
             commands::set_clipboard_entry_pinned,
+            commands::whatsapp_link_start,
+            commands::whatsapp_status,
+            commands::whatsapp_list_chats,
+            commands::whatsapp_list_messages,
+            commands::whatsapp_send_message,
+            commands::whatsapp_send_media,
+            commands::whatsapp_get_media,
+            commands::whatsapp_request_media,
+            commands::whatsapp_mark_read,
+            commands::whatsapp_send_reaction,
+            commands::whatsapp_logout,
         ])
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
@@ -131,6 +144,24 @@ pub fn run() {
             });
             let clipboard_state = Arc::clone(app.state::<Arc<AppState>>().inner());
             tauri::async_runtime::spawn(clipboard::run_poll_loop(clipboard_state));
+
+            // Auto-reconnect a previously linked WhatsApp session on launch, matching how
+            // WhatsApp Desktop itself behaves — only skipped when the user has never linked
+            // (no session dir yet) or explicitly logged out (which deletes it, see
+            // `commands::whatsapp_logout`).
+            let whatsapp_session_dir = app_data_dir.join("whatsapp-session");
+            if whatsapp_session_dir.exists() {
+                let app_handle = app.handle().clone();
+                let whatsapp_state = Arc::clone(app.state::<Arc<AppState>>().inner());
+                tauri::async_runtime::spawn(async move {
+                    match whatsapp::bridge::start(app_handle, Arc::clone(&whatsapp_state), whatsapp_session_dir).await {
+                        Ok(handle) => {
+                            *whatsapp_state.whatsapp_bridge.lock().await = Some(handle);
+                        }
+                        Err(e) => tracing::error!("failed to auto-start whatsapp bridge: {e}"),
+                    }
+                });
+            }
 
             Ok(())
         })

@@ -11,6 +11,7 @@ mod notes;
 mod notifications;
 mod photos;
 mod settings;
+mod whatsapp;
 
 pub use clipboard::*;
 pub use contacts::*;
@@ -21,6 +22,7 @@ pub use notes::*;
 pub use notifications::*;
 pub use photos::*;
 pub use settings::*;
+pub use whatsapp::*;
 
 use std::sync::Arc;
 

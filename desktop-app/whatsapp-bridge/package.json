@@ -1,0 +1,17 @@
+{
+  "name": "whatsapp-bridge",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Node child process that speaks the WhatsApp multi-device linked-device protocol (via Baileys) and bridges it to the Rust backend over line-delimited JSON on stdio.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node index.js --session-dir ./.session --standalone"
+  },
+  "dependencies": {
+    "@whiskeysockets/baileys": "^6.7.9",
+    "pino": "^9.5.0",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

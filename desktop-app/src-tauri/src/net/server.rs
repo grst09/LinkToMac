@@ -89,6 +89,13 @@ pub struct AppState {
     pub local_contacts: Mutex<LocalContactsStore>,
     pub pending_messages: Mutex<PendingMessagesStore>,
     pub pending_note_mutations: Mutex<PendingNoteMutationsStore>,
+    /// Live cache of what's arrived from the WhatsApp bridge process this run — see
+    /// `whatsapp::WhatsappState`'s doc comment for why this (unlike most other `AppState`
+    /// fields) has no on-disk persistence of its own.
+    pub whatsapp: Mutex<crate::whatsapp::WhatsappState>,
+    /// `None` until the bridge process has been started (either because a saved session
+    /// existed at launch, or the user clicked "Link WhatsApp") — see `whatsapp::bridge::start`.
+    pub whatsapp_bridge: Mutex<Option<Arc<crate::whatsapp::bridge::BridgeHandle>>>,
     /// Source of the `id` each `ActiveConnection` is tagged with — see that struct's doc comment.
     next_connection_id: std::sync::atomic::AtomicU64,
     pub app_handle: tauri::AppHandle,
@@ -144,6 +151,8 @@ impl AppState {
             local_contacts: Mutex::new(local_contacts),
             pending_messages: Mutex::new(pending_messages),
             pending_note_mutations: Mutex::new(pending_note_mutations),
+            whatsapp: Mutex::new(crate::whatsapp::WhatsappState::default()),
+            whatsapp_bridge: Mutex::new(None),
             next_connection_id: std::sync::atomic::AtomicU64::new(0),
             app_handle,
             mdns: Mutex::new(mdns),

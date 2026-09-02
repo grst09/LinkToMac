@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
-import { RefreshCw, SquarePen, MessageCircle, SmartphoneNfc, Send } from "lucide-react";
+import { RefreshCw, SquarePen, MessageCircle, SmartphoneNfc, Send, MessageSquare } from "lucide-react";
 import { SectionHeader } from "./SectionHeader";
 import { SearchBar } from "./SearchBar";
 import { ResizableDivider } from "./ResizableDivider";
 import { InitialsAvatar } from "./InitialsAvatar";
+import { SegmentedControl } from "./SegmentedControl";
+import { WhatsAppChatList, WhatsAppConversation, WhatsAppLinkCard } from "./WhatsAppPanes";
 import { sectionMeta } from "../theme/sections";
 import {
   initMessagesListeners,
@@ -16,13 +18,20 @@ import {
 } from "../store/messages";
 import { displayNameForAddress, initContactsListeners, useContactsStore } from "../store/contacts";
 import { useNavigationStore, clearPendingMessageAddress } from "../store/navigation";
+import { initWhatsappListeners, useWhatsappStore } from "../store/whatsapp";
+
+type MessagesSubTab = "sms" | "whatsapp";
 
 export function MessagesView() {
   const { threads, loaded } = useMessagesStore();
   useContactsStore((s) => s.contacts); // re-render when contacts arrive, so names resolve
   const pendingAddress = useNavigationStore((s) => s.pendingMessageAddress);
+  const waChats = useWhatsappStore((s) => s.chats);
+  const waLinkStatus = useWhatsappStore((s) => s.linkStatus);
 
+  const [subTab, setSubTab] = useState<MessagesSubTab>("sms");
   const [selectedThreadId, setSelectedThreadId] = useState<string | null>(null);
+  const [selectedWaChatId, setSelectedWaChatId] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [listWidth, setListWidth] = useState(280);
   const [composing, setComposing] = useState<{ address: string } | null>(null);
@@ -30,6 +39,7 @@ export function MessagesView() {
   useEffect(() => {
     initMessagesListeners();
     initContactsListeners();
+    initWhatsappListeners();
   }, []);
 
   // Matches MessagesView.swift's dual-hook comment: handle a pending address both on mount
@@ -48,10 +58,16 @@ export function MessagesView() {
   }, [pendingAddress, threads]);
 
   useEffect(() => {
-    if (!selectedThreadId && !composing && threads.length > 0) {
+    if (subTab === "sms" && !selectedThreadId && !composing && threads.length > 0) {
       setSelectedThreadId(threads[0].threadId);
     }
-  }, [threads, selectedThreadId, composing]);
+  }, [subTab, threads, selectedThreadId, composing]);
+
+  useEffect(() => {
+    if (subTab === "whatsapp" && !selectedWaChatId && waChats.length > 0) {
+      setSelectedWaChatId(waChats[0].id);
+    }
+  }, [subTab, waChats, selectedWaChatId]);
 
   const filteredThreads = useMemo(() => {
     if (!searchText.trim()) return threads;
@@ -68,76 +84,116 @@ export function MessagesView() {
   }, [threads, searchText]);
 
   const selectedThread = threads.find((t) => t.threadId === selectedThreadId) ?? null;
+  const selectedWaChat = waChats.find((c) => c.id === selectedWaChatId) ?? null;
+  const waConnected = waLinkStatus === "open";
 
   return (
     <div className="flex h-full flex-col">
       <SectionHeader
         section={sectionMeta("messages")}
-        subtitle={`${threads.length} conversation${threads.length === 1 ? "" : "s"}`}
+        subtitle={
+          subTab === "sms"
+            ? `${threads.length} conversation${threads.length === 1 ? "" : "s"}`
+            : `${waChats.length} chat${waChats.length === 1 ? "" : "s"}`
+        }
         trailing={
-          <div className="flex gap-1.5">
-            <button
-              onClick={() => refreshMessages()}
-              title="Refresh"
-              className="rounded-md p-1.5 text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-            </button>
-            <button
-              onClick={() => {
-                setComposing({ address: "" });
-                setSelectedThreadId(null);
-              }}
-              title="New Message"
-              className="rounded-md p-1.5 text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-            >
-              <SquarePen className="h-3.5 w-3.5" />
-            </button>
-          </div>
+          subTab === "sms" ? (
+            <div className="flex gap-1.5">
+              <button
+                onClick={() => refreshMessages()}
+                title="Refresh"
+                className="rounded-md p-1.5 text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={() => {
+                  setComposing({ address: "" });
+                  setSelectedThreadId(null);
+                }}
+                title="New Message"
+                className="rounded-md p-1.5 text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+              >
+                <SquarePen className="h-3.5 w-3.5" />
+              </button>
+            </div>
+          ) : undefined
         }
       />
 
       <div className="flex flex-1 overflow-hidden">
         <div className="flex flex-col" style={{ width: listWidth }}>
-          <SearchBar value={searchText} onChange={setSearchText} placeholder="Search conversations" />
-          <div className="flex-1 overflow-y-auto">
-            {!loaded ? null : threads.length === 0 ? (
-              <EmptyState icon={MessageCircle} text="No messages yet" />
-            ) : filteredThreads.length === 0 ? (
-              <EmptyState icon={MessageCircle} text="No matching conversations" />
-            ) : (
-              <ul>
-                {filteredThreads.map((thread) => (
-                  <ThreadRow
-                    key={thread.threadId}
-                    thread={thread}
-                    selected={thread.threadId === selectedThreadId}
-                    onClick={() => {
-                      setSelectedThreadId(thread.threadId);
-                      setComposing(null);
-                    }}
-                  />
-                ))}
-              </ul>
-            )}
+          <div className="p-2">
+            <SegmentedControl
+              layoutId="messages-subtab"
+              fullWidth
+              value={subTab}
+              onChange={setSubTab}
+              options={[
+                { value: "sms", label: "SMS", icon: MessageSquare },
+                { value: "whatsapp", label: "WhatsApp", icon: MessageCircle },
+              ]}
+            />
           </div>
+          {subTab === "sms" ? (
+            <>
+              <SearchBar value={searchText} onChange={setSearchText} placeholder="Search conversations" />
+              <div className="flex-1 overflow-y-auto">
+                {!loaded ? null : threads.length === 0 ? (
+                  <EmptyState icon={MessageCircle} text="No messages yet" />
+                ) : filteredThreads.length === 0 ? (
+                  <EmptyState icon={MessageCircle} text="No matching conversations" />
+                ) : (
+                  <ul>
+                    {filteredThreads.map((thread) => (
+                      <ThreadRow
+                        key={thread.threadId}
+                        thread={thread}
+                        selected={thread.threadId === selectedThreadId}
+                        onClick={() => {
+                          setSelectedThreadId(thread.threadId);
+                          setComposing(null);
+                        }}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </>
+          ) : (
+            <div className="flex-1 overflow-y-auto">
+              {waConnected ? (
+                <WhatsAppChatList selectedChatId={selectedWaChatId} onSelect={setSelectedWaChatId} />
+              ) : (
+                <EmptyState icon={MessageCircle} text="Not linked" />
+              )}
+            </div>
+          )}
         </div>
 
         <ResizableDivider width={listWidth} onWidthChange={setListWidth} minWidth={200} maxWidth={460} />
 
         <div className="flex-1 overflow-hidden">
-          {composing ? (
-            <ComposeView
-              initialAddress={composing.address}
-              onSend={async (address, body) => {
-                const threadId = await sendSms(address, body);
-                setSelectedThreadId(threadId);
-                setComposing(null);
-              }}
-              onCancel={() => setComposing(null)}
-            />
-          ) : selectedThread ? (
-            <ConversationView thread={selectedThread} onSend={(body) => sendSms(selectedThread.address, body)} />
+          {subTab === "sms" ? (
+            composing ? (
+              <ComposeView
+                initialAddress={composing.address}
+                onSend={async (address, body) => {
+                  const threadId = await sendSms(address, body);
+                  setSelectedThreadId(threadId);
+                  setComposing(null);
+                }}
+                onCancel={() => setComposing(null)}
+              />
+            ) : selectedThread ? (
+              <ConversationView thread={selectedThread} onSend={(body) => sendSms(selectedThread.address, body)} />
+            ) : (
+              <EmptyDetail />
+            )
+          ) : !waConnected ? (
+            <WhatsAppLinkCard />
+          ) : selectedWaChat ? (
+            <WhatsAppConversation chat={selectedWaChat} />
           ) : (
             <EmptyDetail />
           )}
