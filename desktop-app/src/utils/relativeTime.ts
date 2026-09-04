@@ -10,3 +10,10 @@ export function relativeTime(epochMillis: number): string {
   const diffDays = diffHours / 24;
   return `${Math.floor(diffDays)}d`;
 }
+
+/** Clock-face time ("10:20 AM") for a message bubble's timestamp — shared by the SMS and
+ *  WhatsApp conversation views, whose message timestamps arrive in different units (SMS: epoch
+ *  ms; WhatsApp/Baileys: epoch seconds) — callers normalize to ms before calling this. */
+export function formatClockTime(epochMillis: number): string {
+  return new Date(epochMillis).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+}

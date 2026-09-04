@@ -28,6 +28,8 @@ import {
   type WaChat,
   type WaMessage,
 } from "../store/whatsapp";
+import { groupIntoBursts } from "../utils/messageGrouping";
+import { formatClockTime } from "../utils/relativeTime";
 
 const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
 
@@ -108,19 +110,19 @@ export function WhatsAppChatList({
   }
 
   return (
-    <ul>
+    <ul className="space-y-0.5 py-1">
       {chats.map((chat) => {
         const name = displayNameForWaChat(chat);
         const last = messagesByChat[chat.id]?.[messagesByChat[chat.id].length - 1];
         return (
-          <li key={chat.id}>
+          <li key={chat.id} className="px-2">
             <button
               onClick={() => onSelect(chat.id)}
-              className={`flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors ${
-                chat.id === selectedChatId ? "bg-green-500/15" : "hover:bg-black/[0.03] dark:hover:bg-white/[0.05]"
+              className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition-colors ${
+                chat.id === selectedChatId ? "bg-green-500/10 dark:bg-green-400/10 shadow-soft" : "hover:bg-black/[0.03] dark:hover:bg-white/[0.05]"
               }`}
             >
-              <InitialsAvatar name={name} />
+              <InitialsAvatar name={name} diameter={38} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-1.5">
                   <span className="truncate text-[13px] font-semibold text-neutral-900 dark:text-neutral-100">
@@ -190,10 +192,27 @@ export function WhatsAppConversation({ chat }: { chat: WaChat }) {
         </div>
       </div>
       <div className="border-t border-black/5 dark:border-white/10" />
-      <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto p-3">
-        {messages.map((m) => (
-          <MessageBubble key={m.id} message={m} showSender={chat.isGroup} />
-        ))}
+      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-3">
+        {groupIntoBursts(messages, (a, b) => a.fromMe === b.fromMe && a.participant === b.participant).map(
+          (burst) => {
+            const outgoing = burst[0].fromMe;
+            const senderLabel = outgoing ? "You" : (burst[0].pushName ?? displayNameForWaChat(chat));
+            return (
+              <div key={burst[0].id} className={`flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
+                {(chat.isGroup || outgoing) && (
+                  <span className="mb-1 px-1 text-[11px] font-medium text-neutral-400 dark:text-neutral-500">
+                    {senderLabel}
+                  </span>
+                )}
+                <div className="flex flex-col gap-1">
+                  {burst.map((m, i) => (
+                    <MessageBubble key={m.id} message={m} isLastInBurst={i === burst.length - 1} />
+                  ))}
+                </div>
+              </div>
+            );
+          },
+        )}
       </div>
       <div className="flex items-end gap-2 border-t border-black/5 dark:border-white/10 p-3">
         <input
@@ -255,7 +274,7 @@ function WaMessageInput({ onSend }: { onSend: (text: string) => void }) {
   );
 }
 
-function MessageBubble({ message, showSender }: { message: WaMessage; showSender: boolean }) {
+function MessageBubble({ message, isLastInBurst }: { message: WaMessage; isLastInBurst: boolean }) {
   const deliveryStatus = useWhatsappStore((s) => s.deliveryStatus[message.id]);
   const [showReactions, setShowReactions] = useState(false);
   const outgoing = message.fromMe;
@@ -268,21 +287,24 @@ function MessageBubble({ message, showSender }: { message: WaMessage; showSender
       animate={{ opacity: 1, y: 0 }}
       className={`group flex ${outgoing ? "justify-end" : "justify-start"}`}
     >
-      <div className="relative max-w-[70%]">
+      <div className="relative max-w-[340px]">
         <div
           onDoubleClick={() => setShowReactions(true)}
-          className={`rounded-2xl px-3 py-2 text-[13px] ${
-            outgoing ? "bg-green-500 text-white" : "bg-black/5 dark:bg-white/10 text-neutral-900 dark:text-neutral-100"
+          className={`rounded-2xl px-3.5 py-2 text-[13px] shadow-soft ${
+            outgoing
+              ? "bg-green-500 text-white"
+              : "border border-black/5 bg-white text-neutral-900 dark:border-white/10 dark:bg-neutral-800 dark:text-neutral-100"
           }`}
         >
-          {showSender && !outgoing && message.pushName && (
-            <div className="mb-0.5 text-xs font-semibold opacity-70">{message.pushName}</div>
-          )}
           <MessageContent message={message} outgoing={outgoing} />
         </div>
-        <div className={`mt-0.5 flex items-center gap-1 text-[10px] text-neutral-400 ${outgoing ? "justify-end" : "justify-start"}`}>
-          <span>{formatTime(message.timestamp)}</span>
-          {outgoing && <DeliveryTicks status={deliveryStatus} />}
+        <div
+          className={`mt-1 flex items-center gap-1 px-1 text-[10px] text-neutral-400 dark:text-neutral-500 ${
+            outgoing ? "justify-end" : "justify-start"
+          } ${isLastInBurst ? "" : "invisible group-hover:visible"}`}
+        >
+          <span>{isLastInBurst ? formatClockTime(message.timestamp * 1000) : ""}</span>
+          {outgoing && isLastInBurst && <DeliveryTicks status={deliveryStatus} />}
           <button
             onClick={() => setShowReactions((v) => !v)}
             className="opacity-0 transition-opacity group-hover:opacity-100"
@@ -491,9 +513,6 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(binary);
 }
 
-function formatTime(timestampSeconds: number): string {
-  return new Date(timestampSeconds * 1000).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-}
 
 function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60);

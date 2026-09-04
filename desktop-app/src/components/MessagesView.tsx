@@ -19,6 +19,8 @@ import {
 import { displayNameForAddress, initContactsListeners, useContactsStore } from "../store/contacts";
 import { useNavigationStore, clearPendingMessageAddress } from "../store/navigation";
 import { initWhatsappListeners, useWhatsappStore } from "../store/whatsapp";
+import { groupIntoBursts } from "../utils/messageGrouping";
+import { formatClockTime } from "../utils/relativeTime";
 
 type MessagesSubTab = "sms" | "whatsapp";
 
@@ -144,7 +146,7 @@ export function MessagesView() {
                 ) : filteredThreads.length === 0 ? (
                   <EmptyState icon={MessageCircle} text="No matching conversations" />
                 ) : (
-                  <ul>
+                  <ul className="space-y-0.5 py-1">
                     {filteredThreads.map((thread) => (
                       <ThreadRow
                         key={thread.threadId}
@@ -234,14 +236,14 @@ function ThreadRow({
   const name = displayNameForAddress(thread.address, thread.contactName);
   const last = thread.messages[thread.messages.length - 1];
   return (
-    <li>
+    <li className="px-2">
       <button
         onClick={onClick}
-        className={`flex w-full items-center gap-2.5 px-3 py-2 text-left transition-colors ${
-          selected ? "bg-blue-500/15" : "hover:bg-black/[0.03] dark:hover:bg-white/[0.05]"
+        className={`flex w-full items-center gap-2.5 rounded-xl px-2.5 py-2.5 text-left transition-colors ${
+          selected ? "bg-blue-500/10 dark:bg-blue-400/10 shadow-soft" : "hover:bg-black/[0.03] dark:hover:bg-white/[0.05]"
         }`}
       >
-        <InitialsAvatar name={name} />
+        <InitialsAvatar name={name} diameter={38} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <span className="truncate text-[13px] font-semibold text-neutral-900 dark:text-neutral-100">
@@ -254,7 +256,10 @@ function ThreadRow({
             )}
           </div>
           {last && (
-            <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">{last.body}</p>
+            <p className="truncate text-xs text-neutral-500 dark:text-neutral-400">
+              {last.isOutgoing && <span className="text-neutral-400 dark:text-neutral-500">You: </span>}
+              {last.body}
+            </p>
           )}
         </div>
       </button>
@@ -370,25 +375,36 @@ function ConversationView({ thread, onSend }: { thread: SmsThread; onSend: (body
           </span>
         </div>
       )}
-      <div ref={scrollRef} className="flex-1 space-y-2 overflow-y-auto p-3">
-        {thread.messages.map((m) => (
-          <motion.div
-            key={m.id}
-            initial={{ opacity: 0, y: 4 }}
-            animate={{ opacity: 1, y: 0 }}
-            className={`flex ${m.isOutgoing ? "justify-end" : "justify-start"}`}
-          >
-            <div
-              className={`max-w-[70%] rounded-2xl px-3 py-2 text-[13px] ${
-                m.isOutgoing
-                  ? "bg-blue-500 text-white"
-                  : "bg-black/5 dark:bg-white/10 text-neutral-900 dark:text-neutral-100"
-              }`}
-            >
-              {m.body}
+      <div ref={scrollRef} className="flex-1 space-y-3 overflow-y-auto p-3">
+        {groupIntoBursts(thread.messages, (a, b) => a.isOutgoing === b.isOutgoing).map((burst) => {
+          const outgoing = burst[0].isOutgoing;
+          return (
+            <div key={burst[0].id} className={`flex flex-col ${outgoing ? "items-end" : "items-start"}`}>
+              <span className="mb-1 px-1 text-[11px] font-medium text-neutral-400 dark:text-neutral-500">
+                {outgoing ? "You" : name}
+              </span>
+              <div className="flex flex-col gap-1">
+                {burst.map((m) => (
+                  <motion.div
+                    key={m.id}
+                    initial={{ opacity: 0, y: 4 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    className={`max-w-[340px] rounded-2xl px-3.5 py-2 text-[13px] shadow-soft ${
+                      outgoing
+                        ? "bg-blue-500 text-white"
+                        : "border border-black/5 bg-white text-neutral-900 dark:border-white/10 dark:bg-neutral-800 dark:text-neutral-100"
+                    }`}
+                  >
+                    {m.body}
+                  </motion.div>
+                ))}
+              </div>
+              <span className="mt-1 px-1 text-[10px] text-neutral-400 dark:text-neutral-500">
+                {formatClockTime(burst[burst.length - 1].date)}
+              </span>
             </div>
-          </motion.div>
-        ))}
+          );
+        })}
       </div>
       <MessageInput onSend={onSend} />
     </div>
