@@ -14,6 +14,7 @@ import android.os.Environment
 import android.os.PowerManager
 import android.provider.MediaStore
 import android.provider.Settings
+import android.util.Base64
 import androidx.activity.ComponentActivity
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.compose.BackHandler
@@ -465,6 +466,29 @@ class MainActivity : ComponentActivity() {
     private fun checkClipboard() {
         val clip = clipboardManager.primaryClip ?: return
         if (clip.itemCount == 0) return
+
+        // An image clip's item has a content:// URI, not text — `coerceToText` below would just
+        // stringify that URI (not the pixels), which isn't remotely the same thing as "this
+        // clipboard content is text". Check for that first and read the actual bytes instead.
+        if (clip.description.hasMimeType("image/*")) {
+            val uri = clip.getItemAt(0).uri ?: return
+            try {
+                // Normalized to PNG regardless of source format (a Gallery copy is commonly
+                // JPEG/WEBP) — decoding to a Bitmap and re-encoding keeps the wire format the
+                // same PNG-both-directions contract the Mac side already assumes, rather than
+                // needing it to handle every format Android might hand back.
+                val bitmap = contentResolver.openInputStream(uri)?.use { android.graphics.BitmapFactory.decodeStream(it) }
+                    ?: return
+                val out = java.io.ByteArrayOutputStream()
+                bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
+                val base64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+                SyncForegroundService.reportLocalClipboardImage(base64)
+            } catch (e: Exception) {
+                android.util.Log.e("MainActivity", "Failed to read clipboard image", e)
+            }
+            return
+        }
+
         val text = clip.getItemAt(0).coerceToText(this)?.toString() ?: return
         if (text.isBlank()) return
         SyncForegroundService.reportLocalClipboardText(text)

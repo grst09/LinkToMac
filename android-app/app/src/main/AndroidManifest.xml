@@ -74,5 +74,19 @@
                 android:resource="@xml/accessibility_service_config" />
         </service>
 
+        <!-- A clipboard image `ClipData.Item` must reference a content:// URI — there's no
+             "raw bytes" clipboard API for images on Android — so a received image is written to
+             cacheDir/clipboard_images/ first and exposed here for whatever app the user pastes
+             into to read. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
     </application>
 </manifest>

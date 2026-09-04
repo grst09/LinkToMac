@@ -7,6 +7,7 @@ import {
   Check,
   Trash2,
   Clipboard as ClipboardIcon,
+  Image as ImageIcon,
   Search as SearchIcon,
   Star,
 } from "lucide-react";
@@ -19,6 +20,7 @@ import { relativeTime } from "../utils/relativeTime";
 import {
   initClipboardHistoryListeners,
   copyClipboardEntry,
+  copyClipboardImageEntry,
   clearClipboardHistory,
   setClipboardEntryPinned,
   useClipboardHistoryStore,
@@ -61,7 +63,11 @@ export function ClipboardView() {
 
   async function copyEntry(entry: ClipboardEntry | undefined) {
     if (!entry) return;
-    await copyClipboardEntry(entry.text);
+    if (entry.imageBase64) {
+      await copyClipboardImageEntry(entry.imageBase64);
+    } else {
+      await copyClipboardEntry(entry.text);
+    }
     setJustCopiedId(entry.id);
     setTimeout((id) => setJustCopiedId((cur) => (cur === id ? null : cur)), 1500, entry.id);
   }
@@ -218,6 +224,13 @@ function TypeBadge({ entry }: { entry: ClipboardEntry }) {
       </span>
     );
   }
+  if (entry.imageBase64) {
+    return (
+      <span className="flex h-7 w-9 shrink-0 items-center justify-center rounded-md bg-black/5 dark:bg-white/10 text-neutral-500 dark:text-neutral-400">
+        <ImageIcon className="h-3.5 w-3.5" />
+      </span>
+    );
+  }
   return (
     <span className="flex h-7 w-9 shrink-0 items-center justify-center rounded-md bg-black/5 dark:bg-white/10 text-[10px] font-semibold tracking-wide text-neutral-500 dark:text-neutral-400">
       {entryTypeLabel(entry.text)}
@@ -266,9 +279,17 @@ function ClipboardRow({
           <span className="text-xs text-neutral-300 dark:text-neutral-600">·</span>
           <span className="text-xs text-neutral-400 dark:text-neutral-500">{relativeTime(entry.timestamp)}</span>
         </div>
-        <p className="mt-0.5 whitespace-pre-wrap break-words line-clamp-4 text-[13px] text-neutral-800 dark:text-neutral-200">
-          {entry.text}
-        </p>
+        {entry.imageBase64 ? (
+          <img
+            src={`data:image/png;base64,${entry.imageBase64}`}
+            alt="Copied image"
+            className="mt-1 max-h-32 rounded-lg border border-black/5 dark:border-white/10"
+          />
+        ) : (
+          <p className="mt-0.5 whitespace-pre-wrap break-words line-clamp-4 text-[13px] text-neutral-800 dark:text-neutral-200">
+            {entry.text}
+          </p>
+        )}
       </div>
       <div className="flex shrink-0 items-center gap-1">
         {shortcutNumber && (

@@ -5,6 +5,9 @@ import { listen } from "@tauri-apps/api/event";
 export interface ClipboardEntry {
   id: string;
   text: string;
+  /** PNG, base64-encoded — present only for image entries (`text` is a fixed "📷 Image" label
+   *  for those, so search/fallback-display code that reads `entry.text` still works). */
+  imageBase64?: string;
   source: "mac" | "android";
   timestamp: number;
   isPinned: boolean;
@@ -22,6 +25,10 @@ export const useClipboardHistoryStore = create<ClipboardHistoryState>(() => ({
 
 export async function copyClipboardEntry(text: string) {
   await invoke("copy_clipboard_entry", { text });
+}
+
+export async function copyClipboardImageEntry(imageBase64: string) {
+  await invoke("copy_clipboard_image_entry", { imageBase64 });
 }
 
 export async function clearClipboardHistory() {
