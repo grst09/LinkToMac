@@ -48,10 +48,14 @@ pub struct AppSettings {
     pub mirror_quality: MirrorQuality,
     /// Client-side pre-check on uploads (Mac → phone) before ever sending a byte — see
     /// `commands::files::upload_file`. Downloads have no equivalent check, matching the old
-    /// Swift app (see docs/PLAN.md's Phase D notes). Capped at 50 — Android's own
-    /// `FileRepository.MAX_TRANSFER_BYTES` is a hardcoded 50MB ceiling it enforces independently,
-    /// so this can only be lowered from the frontend, never raised past what Android will
-    /// actually accept.
+    /// Swift app (see docs/PLAN.md's Phase D notes) — Android's own
+    /// `FileRepository.MAX_TRANSFER_BYTES` is the only gate on that direction. Both are capped at
+    /// 8MB: every transfer is base64'd twice on the wire (once for the JSON payload field, again
+    /// when the encrypted envelope is serialized — see `crypto::secure_channel::seal`), roughly
+    /// 1.78x inflation, and OkHttp's WebSocket send queue on the Android side silently drops
+    /// (doesn't error) any single outgoing message over 16MB. This can only be lowered from the
+    /// frontend, never raised past what Android will actually accept without also raising
+    /// `MAX_TRANSFER_BYTES` there.
     pub max_transfer_mb: u64,
     /// Whether the Mac advertises itself over mDNS and accepts new incoming connections at all —
     /// see `net::server::run`'s doc comment. Off means a disconnected Mac stays fully closed
@@ -71,11 +75,18 @@ impl Default for AppSettings {
             show_notification_banners: true,
             clipboard_sync_enabled: true,
             mirror_quality: MirrorQuality::Balanced,
-            max_transfer_mb: 50,
+            max_transfer_mb: 8,
             discovery_enabled: true,
         }
     }
 }
+
+/// Matches Android's `FileRepository.MAX_TRANSFER_BYTES` — see `AppSettings::max_transfer_mb`'s
+/// doc comment for why. Enforced here too (not just as the default and the frontend's input
+/// max) so a `max_transfer_mb` persisted from before this ceiling was lowered — anyone who's run
+/// an earlier build — gets clamped back down to something Android will actually accept, instead
+/// of silently keeping a stale, now-unsafe value forever.
+const MAX_TRANSFER_MB_CEILING: u64 = 8;
 
 pub struct SettingsStore {
     file_path: PathBuf,
@@ -86,7 +97,8 @@ impl SettingsStore {
     pub fn load_or_create(app_data_dir: &Path) -> std::io::Result<Self> {
         std::fs::create_dir_all(app_data_dir)?;
         let file_path = app_data_dir.join("settings.json");
-        let settings = Self::try_load(&file_path).unwrap_or_default();
+        let mut settings = Self::try_load(&file_path).unwrap_or_default();
+        settings.max_transfer_mb = settings.max_transfer_mb.clamp(1, MAX_TRANSFER_MB_CEILING);
         Ok(Self { file_path, settings })
     }
 

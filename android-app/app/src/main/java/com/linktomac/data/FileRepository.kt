@@ -43,15 +43,25 @@ class FileRepository {
             }
     }
 
-    fun readFile(path: String): Pair<ByteArray, String>? {
-        val file = resolve(path)?.takeIf { it.isFile } ?: return null
-        if (file.length() > MAX_TRANSFER_BYTES) return null
+    /** Distinguishes "too large to transfer" from other read failures so the Mac side (and the
+     *  user) can tell why a preview or download didn't come through, instead of a generic
+     *  "couldn't read that file" either way — this came up specifically for video previews,
+     *  which are far more likely than other file types to land on the size cap. */
+    sealed class ReadFileResult {
+        data class Success(val bytes: ByteArray, val mimeType: String) : ReadFileResult()
+        data class TooLarge(val maxBytes: Long) : ReadFileResult()
+        object Failed : ReadFileResult()
+    }
+
+    fun readFile(path: String): ReadFileResult {
+        val file = resolve(path)?.takeIf { it.isFile } ?: return ReadFileResult.Failed
+        if (file.length() > MAX_TRANSFER_BYTES) return ReadFileResult.TooLarge(MAX_TRANSFER_BYTES)
         val bytes = try {
             file.readBytes()
         } catch (e: Exception) {
-            return null
+            return ReadFileResult.Failed
         }
-        return bytes to mimeTypeFor(file.name)
+        return ReadFileResult.Success(bytes, mimeTypeFor(file.name))
     }
 
     /** Writes into an existing directory only — this is a drop target, not a mkdir tool. */
@@ -136,8 +146,14 @@ class FileRepository {
     }
 
     companion object {
-        /** Matches the Mac side's cap — both are transferred as a single base64 JSON payload,
-         *  same as Photos' full-resolution fetch, so there's no chunking/resume for large files. */
-        const val MAX_TRANSFER_BYTES = 50L * 1024 * 1024
+        /** File bytes are base64'd twice on the wire — once for the JSON `dataBase64` field,
+         *  again when the encrypted envelope itself is serialized (see `SecureChannel.seal` /
+         *  `MacConnection.send`) — roughly 1.78x total inflation, no chunking/resume. OkHttp's
+         *  WebSocket send queue caps a single outgoing message at 16MB and silently drops (not
+         *  errors) anything that would exceed it, so this needs real headroom under
+         *  16MB / 1.78 ≈ 9MB, not just under Photos' unrelated 50MB full-resolution-fetch cap
+         *  this used to (wrongly) match. Matches the Mac side's `max_transfer_mb` default.
+         */
+        const val MAX_TRANSFER_BYTES = 8L * 1024 * 1024
     }
 }

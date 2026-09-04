@@ -16,6 +16,13 @@ import {
   type MirrorQuality,
 } from "../store/settings";
 
+// Every file transfer is base64'd twice on the wire (once for the JSON payload, again when the
+// encrypted envelope is serialized), and Android's WebSocket send queue silently drops anything
+// that pushes a single outgoing message over 16MB — see store/settings.rs's AppSettings doc
+// comment on the Rust side. 8MB leaves real headroom under that ceiling; this can only be
+// lowered here, never raised past what Android's own FileRepository.MAX_TRANSFER_BYTES accepts.
+const MAX_TRANSFER_MB_CEILING = 8;
+
 const THEME_OPTIONS: { value: ThemePreference; label: string; icon: typeof Sun }[] = [
   { value: "light", label: "Light", icon: Sun },
   { value: "dark", label: "Dark", icon: Moon },
@@ -116,10 +123,10 @@ export function SettingsView() {
               <input
                 type="number"
                 min={1}
-                max={50}
+                max={MAX_TRANSFER_MB_CEILING}
                 value={settings.maxTransferMb}
                 onChange={(e) => {
-                  const mb = Math.max(1, Math.min(50, Number(e.target.value) || 1));
+                  const mb = Math.max(1, Math.min(MAX_TRANSFER_MB_CEILING, Number(e.target.value) || 1));
                   updateSettings({ maxTransferMb: mb });
                 }}
                 className="w-16 rounded-lg border border-black/10 dark:border-white/15 bg-transparent px-2 py-1 text-right text-[13px] focus:outline-none focus:ring-2 focus:ring-blue-500/40"

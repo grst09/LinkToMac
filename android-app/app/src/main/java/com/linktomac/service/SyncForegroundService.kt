@@ -206,12 +206,17 @@ class SyncForegroundService : Service() {
         connection.onFilesDownloadRequested = { path ->
             scope.launch(Dispatchers.IO) {
                 val name = path.substringAfterLast('/')
-                val result = fileRepository.readFile(path)
-                if (result != null) {
-                    val (bytes, mimeType) = result
-                    connection.sendFilesDownloadResult(path, name, Base64.encodeToString(bytes, Base64.NO_WRAP), mimeType)
-                } else {
-                    connection.sendFilesDownloadResult(path, name, error = "Couldn't read that file")
+                when (val result = fileRepository.readFile(path)) {
+                    is FileRepository.ReadFileResult.Success ->
+                        connection.sendFilesDownloadResult(
+                            path, name, Base64.encodeToString(result.bytes, Base64.NO_WRAP), result.mimeType,
+                        )
+                    is FileRepository.ReadFileResult.TooLarge -> {
+                        val maxMb = result.maxBytes / (1024 * 1024)
+                        connection.sendFilesDownloadResult(path, name, error = "File is too large to transfer ($maxMb MB max)")
+                    }
+                    FileRepository.ReadFileResult.Failed ->
+                        connection.sendFilesDownloadResult(path, name, error = "Couldn't read that file")
                 }
             }
         }
