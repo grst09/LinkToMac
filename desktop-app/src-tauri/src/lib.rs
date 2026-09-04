@@ -9,6 +9,7 @@ mod net;
 mod notify;
 mod photos;
 mod protocol;
+mod quicklook;
 mod store;
 mod whatsapp;
 
@@ -65,6 +66,7 @@ pub fn run() {
             commands::get_files_state,
             commands::list_files,
             commands::download_file,
+            commands::preview_file,
             commands::upload_file,
             commands::create_folder,
             commands::rename_file,

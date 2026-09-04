@@ -17,29 +17,60 @@ export interface FileClipboard {
   operation: ClipboardOp;
 }
 
+export interface FilePreviewData {
+  path: string;
+  mimeType: string | null;
+  dataBase64: string;
+}
+
+export type FilesViewMode = "grid" | "list" | "preview";
+
 interface FilesState {
   currentPath: string;
   entries: FileEntry[];
   clipboard: FileClipboard | null;
-  viewMode: "grid" | "list";
+  viewMode: FilesViewMode;
   uploadingFileName: string | null;
   successMessage: string | null;
   errorMessage: string | null;
   loaded: boolean;
+  previewData: FilePreviewData | null;
+  previewLoading: boolean;
 }
 
 export const useFilesStore = create<FilesState>(() => ({
   currentPath: "",
   entries: [],
   clipboard: null,
-  viewMode: "grid",
+  viewMode: "list",
   uploadingFileName: null,
   successMessage: null,
   errorMessage: null,
   loaded: false,
+  previewData: null,
+  previewLoading: false,
 }));
 
-export function setViewMode(mode: "grid" | "list") {
+function showTransientError(message: string) {
+  useFilesStore.setState({ errorMessage: message, previewLoading: false });
+  setTimeout(() => useFilesStore.setState({ errorMessage: null }), 4000);
+}
+
+/** Every files.* command below goes through this instead of calling `invoke` directly. A
+ *  Tauri command can reject before ever reaching the phone (most commonly "no active
+ *  connection") — without this, that rejection was an unhandled promise that vanished with
+ *  zero user-facing feedback, so an action like Back could silently do nothing and leave no
+ *  trace of why. */
+async function invokeFiles<T>(command: string, args?: Record<string, unknown>): Promise<T | undefined> {
+  try {
+    return await invoke<T>(command, args);
+  } catch (e) {
+    showTransientError(typeof e === "string" ? e : "Something went wrong — check the connection");
+    return undefined;
+  }
+}
+
+export function setViewMode(mode: FilesViewMode) {
   useFilesStore.setState({ viewMode: mode });
 }
 
@@ -53,44 +84,55 @@ export function parentPath(currentPath: string): string {
 }
 
 export async function listFiles(path: string) {
-  await invoke("list_files", { path });
+  await invokeFiles("list_files", { path });
 }
 
 /** `open: true` opens the file with the OS default app once downloaded (double-click);
  *  `open: false` downloads it and reveals it in Finder (the "Download" context-menu item). */
 export async function downloadFile(path: string, open: boolean) {
-  await invoke("download_file", { path, open });
+  await invokeFiles("download_file", { path, open });
+}
+
+/** Fetches a file's bytes for the preview panel — result arrives via the "files-preview" event,
+ *  not this call's return value (matches every other files.* command in this file). */
+export async function previewFile(path: string) {
+  useFilesStore.setState({ previewLoading: true });
+  await invokeFiles("preview_file", { path });
+}
+
+export function clearPreview() {
+  useFilesStore.setState({ previewData: null, previewLoading: false });
 }
 
 export async function uploadFile(path: string, name: string, dataBase64: string, mimeType: string) {
-  await invoke("upload_file", { path, name, dataBase64, mimeType });
+  await invokeFiles("upload_file", { path, name, dataBase64, mimeType });
 }
 
 export async function createFolder(name: string) {
-  await invoke("create_folder", { name });
+  await invokeFiles("create_folder", { name });
 }
 
 export async function renameFile(path: string, newName: string) {
-  await invoke("rename_file", { path, newName });
+  await invokeFiles("rename_file", { path, newName });
 }
 
 export async function deleteFile(path: string) {
-  await invoke("delete_file", { path });
+  await invokeFiles("delete_file", { path });
 }
 
 export async function cutToClipboard(path: string, name: string) {
-  await invoke("cut_to_clipboard", { path, name });
+  await invokeFiles("cut_to_clipboard", { path, name });
   useFilesStore.setState({ clipboard: { path, name, operation: "cut" } });
 }
 
 export async function copyToClipboard(path: string, name: string) {
-  await invoke("copy_to_clipboard", { path, name });
+  await invokeFiles("copy_to_clipboard", { path, name });
   useFilesStore.setState({ clipboard: { path, name, operation: "copy" } });
 }
 
 export async function pasteClipboard() {
   const clipboard = useFilesStore.getState().clipboard;
-  await invoke("paste_clipboard");
+  await invokeFiles("paste_clipboard");
   // Cut is a one-shot operation (matches the Rust side clearing it on a successful move) —
   // clear optimistically rather than waiting on a dedicated event for this alone. Copy leaves
   // the clipboard as-is so the same item can be pasted again elsewhere.
@@ -121,12 +163,27 @@ export function initFilesListeners() {
       currentPath: event.payload.path,
       entries: event.payload.entries,
       loaded: true,
+      previewData: null,
+      previewLoading: false,
     });
     if (event.payload.error) {
-      useFilesStore.setState({ errorMessage: event.payload.error });
-      setTimeout(() => useFilesStore.setState({ errorMessage: null }), 4000);
+      showTransientError(event.payload.error);
     }
   });
+
+  listen<{ path: string; name: string; mimeType: string | null; dataBase64: string }>(
+    "files-preview",
+    (event) => {
+      useFilesStore.setState({
+        previewData: {
+          path: event.payload.path,
+          mimeType: event.payload.mimeType,
+          dataBase64: event.payload.dataBase64,
+        },
+        previewLoading: false,
+      });
+    },
+  );
 
   listen<string | null>("files-upload-progress", (event) => {
     useFilesStore.setState({ uploadingFileName: event.payload });
@@ -138,7 +195,6 @@ export function initFilesListeners() {
   });
 
   listen<string>("files-error", (event) => {
-    useFilesStore.setState({ errorMessage: event.payload });
-    setTimeout(() => useFilesStore.setState({ errorMessage: null }), 4000);
+    showTransientError(event.payload);
   });
 }

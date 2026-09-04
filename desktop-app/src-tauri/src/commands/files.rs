@@ -3,7 +3,7 @@ use std::sync::Arc;
 use serde::Serialize;
 use tauri::Emitter;
 
-use crate::files::{ClipboardOp, FileClipboard};
+use crate::files::{ClipboardOp, DownloadIntent, FileClipboard};
 use crate::net::server::{send_to_active, AppState};
 use crate::protocol::envelope::{
     FileEntry, FilesCreateFolderPayload, FilesDeletePayload, FilesDownloadRequestPayload,
@@ -43,7 +43,21 @@ pub async fn download_file(
     path: String,
     open: bool,
 ) -> Result<(), String> {
-    state.files.lock().await.pending_open_path = if open { Some(path.clone()) } else { None };
+    let intent = if open { DownloadIntent::Open } else { DownloadIntent::Reveal };
+    state.files.lock().await.pending_downloads.push_back((path.clone(), intent));
+    send_to_active(&state, "files.download", &FilesDownloadRequestPayload { path })
+        .await
+        .map_err(|e| e.to_string())
+}
+
+/// Fetches a file's bytes for the Files preview panel (selecting a file in Preview view)
+/// without saving anything to disk — see `dispatch::files::download_result`'s preview branch.
+/// Browsing Preview view fires one of these per click, often before the last one's response has
+/// come back, so this — unlike a single "pending path" flag — has to tolerate several being in
+/// flight at once.
+#[tauri::command]
+pub async fn preview_file(state: tauri::State<'_, Arc<AppState>>, path: String) -> Result<(), String> {
+    state.files.lock().await.pending_downloads.push_back((path.clone(), DownloadIntent::Preview));
     send_to_active(&state, "files.download", &FilesDownloadRequestPayload { path })
         .await
         .map_err(|e| e.to_string())

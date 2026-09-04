@@ -17,3 +17,13 @@ export function relativeTime(epochMillis: number): string {
 export function formatClockTime(epochMillis: number): string {
   return new Date(epochMillis).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
 }
+
+/** Full date string ("Mon, 12 Oct 2025") for the Files table's Modified column. */
+export function formatFullDate(epochMillis: number): string {
+  return new Date(epochMillis).toLocaleDateString([], {
+    weekday: "short",
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
