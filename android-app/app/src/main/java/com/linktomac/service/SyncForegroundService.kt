@@ -14,12 +14,14 @@ import android.os.Build
 import android.os.IBinder
 import android.util.Base64
 import androidx.core.app.NotificationCompat
+import androidx.core.content.FileProvider
 import androidx.core.app.ServiceCompat
 import com.linktomac.MainActivity
 import com.linktomac.data.BatteryStatusRepository
 import com.linktomac.data.CallLogRepository
 import com.linktomac.data.ContactRepository
 import com.linktomac.data.FileRepository
+import com.linktomac.data.InstalledAppsRepository
 import com.linktomac.data.PhotoRepository
 import com.linktomac.data.SmsRepository
 import com.linktomac.net.ConnectionState
@@ -40,10 +42,14 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
+import java.io.File
+import java.io.FileOutputStream
 import java.util.UUID
 
 /**
@@ -64,6 +70,7 @@ class SyncForegroundService : Service() {
     private lateinit var photoRepository: PhotoRepository
     private lateinit var batteryStatusRepository: BatteryStatusRepository
     private lateinit var fileRepository: FileRepository
+    private lateinit var installedAppsRepository: InstalledAppsRepository
     private lateinit var noteStore: NoteStore
     private lateinit var appSettingsStore: AppSettingsStore
     private var discoveryJob: Job? = null
@@ -75,6 +82,10 @@ class SyncForegroundService : Service() {
      *  system clipboard doesn't get read back and echoed to the Mac as if it were a new local
      *  copy — see [applyRemoteClipboard] and [reportLocalClipboardText]. */
     private var lastSyncedClipboardText: String? = null
+
+    /** Same loop-prevention role as [lastSyncedClipboardText], for images — see
+     *  [applyRemoteClipboardImage]/[reportLocalClipboardImage]. */
+    private var lastSyncedClipboardImageBase64: String? = null
 
     /** Set by the explicit "Disconnect" action (distinct from [ACTION_FORGET] — the pairing
      *  itself is kept) so the persistent sync notification stays hidden until the user
@@ -91,6 +102,7 @@ class SyncForegroundService : Service() {
         contactRepository = ContactRepository(applicationContext)
         photoRepository = PhotoRepository(applicationContext)
         batteryStatusRepository = BatteryStatusRepository(applicationContext)
+        installedAppsRepository = InstalledAppsRepository(applicationContext)
         fileRepository = FileRepository()
         noteStore = NoteStore(applicationContext)
         appSettingsStore = AppSettingsStore(applicationContext)
@@ -164,7 +176,19 @@ class SyncForegroundService : Service() {
         connection.onMirrorTextInputRequested = { text ->
             InputInjectionAccessibilityService.instance?.pasteText(text)
         }
+        connection.onMirrorAppsListRequested = {
+            scope.launch(Dispatchers.IO) {
+                connection.sendMirrorAppsList(installedAppsRepository.listLaunchableApps())
+            }
+        }
+        connection.onMirrorLaunchAppRequested = { packageName ->
+            packageManager.getLaunchIntentForPackage(packageName)?.let { intent ->
+                intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                startActivity(intent)
+            }
+        }
         connection.onClipboardUpdateReceived = { text -> applyRemoteClipboard(text) }
+        connection.onClipboardImageUpdateReceived = { imageBase64 -> applyRemoteClipboardImage(imageBase64) }
         connection.onFilesListRequested = { path ->
             scope.launch(Dispatchers.IO) {
                 if (!fileRepository.hasAccess()) {
@@ -330,21 +354,8 @@ class SyncForegroundService : Service() {
             }
         }
         connection.state.onEach { state ->
-            if (!manuallyDisconnected) {
-                when (state) {
-                    // Actively connected or trying to — worth an ongoing notification, and
-                    // required by Android to keep running as a foreground service at all.
-                    is ConnectionState.Connected, ConnectionState.Connecting ->
-                        startForeground(NOTIFICATION_ID, buildNotification(state))
-                    // Disconnected, or never connected — no ongoing notification. This is a
-                    // deliberate trade-off: dropping out of the foreground state here means a
-                    // paired-but-unreachable phone won't keep silently retrying in the
-                    // background either (Android doesn't let a plain background Service run
-                    // reliably) — reopening the app (or ACTION_RECONNECT) is what tries again.
-                    is ConnectionState.Failed, ConnectionState.Idle ->
-                        ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
-                }
-            }
+            _connectionState.value = state
+            applyForegroundPresentation(state)
             if (state is ConnectionState.Failed) {
                 // An unexpected drop (Mac unreachable, network blip, etc.) — same "stop looking
                 // for connections until asked" posture as a manual disconnect: cancel the
@@ -379,6 +390,9 @@ class SyncForegroundService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // See satisfyForegroundContract's doc comment — required unconditionally, before the
+        // action dispatch below, for every single call regardless of what triggered it.
+        satisfyForegroundContract()
         when (intent?.action) {
             ACTION_PAIR -> intent.getStringExtra(EXTRA_QR_PAYLOAD)?.let { pairWithQrPayload(it) }
             ACTION_NOTIFICATION_POSTED -> if (appSettingsStore.notificationsSyncEnabled) {
@@ -475,6 +489,29 @@ class SyncForegroundService : Service() {
         val clipboardManager = getSystemService(ClipboardManager::class.java)
         clipboardManager.setPrimaryClip(ClipData.newPlainText("LinkToMac", text))
         android.util.Log.d("SyncForegroundService", "clipboard.update applied from Mac: ${text.take(40)}")
+    }
+
+    /** Android has no "raw bytes" clipboard API for images — a `ClipData.Item` must reference a
+     *  content:// URI — so the PNG is written to a cache file first and exposed via the
+     *  FileProvider declared in AndroidManifest.xml (see file_paths.xml). Same loop-prevention
+     *  ordering as [applyRemoteClipboard]: the guard is updated before the write. */
+    private fun applyRemoteClipboardImage(imageBase64: String) {
+        if (!appSettingsStore.clipboardSyncEnabled) return
+        if (imageBase64 == lastSyncedClipboardImageBase64) return
+        lastSyncedClipboardImageBase64 = imageBase64
+        try {
+            val bytes = Base64.decode(imageBase64, Base64.NO_WRAP)
+            val dir = File(cacheDir, "clipboard_images").apply { mkdirs() }
+            val file = File(dir, "clip.png")
+            FileOutputStream(file).use { it.write(bytes) }
+            val uri = FileProvider.getUriForFile(this, "$packageName.fileprovider", file)
+            val clip = ClipData.newUri(contentResolver, "LinkToMac", uri)
+            val clipboardManager = getSystemService(ClipboardManager::class.java)
+            clipboardManager.setPrimaryClip(clip)
+            android.util.Log.d("SyncForegroundService", "clipboard.updateImage applied from Mac (${bytes.size} bytes)")
+        } catch (e: Exception) {
+            android.util.Log.e("SyncForegroundService", "Failed to apply remote clipboard image", e)
+        }
     }
 
     private fun syncCallsAndSms() {
@@ -590,6 +627,39 @@ class SyncForegroundService : Service() {
         }
     }
 
+    /** Whether the ongoing notification should actually be showing right now — used both by the
+     *  reactive `connection.state` collector below and by [satisfyForegroundContract] (which
+     *  needs to know the answer *right now*, synchronously, independent of that Flow). */
+    private fun shouldShowForegroundNotification(state: ConnectionState): Boolean =
+        !manuallyDisconnected && (state is ConnectionState.Connected || state is ConnectionState.Connecting)
+
+    private fun applyForegroundPresentation(state: ConnectionState) {
+        if (shouldShowForegroundNotification(state)) {
+            startForeground(NOTIFICATION_ID, buildNotification(state))
+        } else {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        }
+    }
+
+    /** Android requires *every* `Context.startForegroundService()` call to be followed by a
+     *  `Service.startForeground()` call within a few seconds — regardless of whether this
+     *  service instance already considers itself foreground from an earlier call. Skipping this
+     *  for an action that doesn't otherwise touch foreground state (relaying a phone
+     *  notification, a plain reconnect-if-paired `start()` with no specific action) crashes the
+     *  *entire app* with `ForegroundServiceDidNotStartInTimeException` — this is exactly what
+     *  was happening: `notifyPosted`/`notifyRemoved`/`start()` all call
+     *  `startForegroundService()`, but once the "no notification while disconnected" behavior
+     *  below could leave this service out of the foreground state, nothing in those paths ever
+     *  satisfied the obligation for *that* call.
+     *
+     *  Calling `startForeground()` and then immediately `stopForeground()` in the same
+     *  synchronous call (no suspend point in between) satisfies the contract without the
+     *  notification actually flashing visibly — a well-known, deliberate pattern for exactly
+     *  this situation, not a bug. */
+    private fun satisfyForegroundContract() {
+        applyForegroundPresentation(connection.state.value)
+    }
+
     private fun buildNotification(state: ConnectionState): Notification {
         ensureChannel()
         val statusText = when (state) {
@@ -643,7 +713,20 @@ class SyncForegroundService : Service() {
         var instance: SyncForegroundService? = null
             private set
 
-        fun connectionState(): kotlinx.coroutines.flow.StateFlow<ConnectionState>? = instance?.connection?.state
+        /** Outlives any single service instance — dropping out of the foreground state (see
+         *  the `connection.state.onEach` block below) makes this service eligible for the OS to
+         *  kill and later recreate from scratch on the next `startForegroundService` call (e.g.
+         *  a "Reconnect" tap), which gives `connection` itself a brand new `StateFlow` each time.
+         *  A UI collector that grabbed a *specific* instance's `connection.state` once (the old
+         *  `connectionState()` below did exactly that) would keep observing that now-abandoned
+         *  flow forever after a recreation — frozen on whatever it last saw, even though a
+         *  new, genuinely-connected instance is running right behind it. Piping every instance's
+         *  updates into this single companion-level flow instead means a collector that
+         *  subscribes to *this* keeps working correctly across any number of recreations,
+         *  without needing to notice or care that the underlying service instance changed.
+         */
+        private val _connectionState = MutableStateFlow<ConnectionState>(ConnectionState.Idle)
+        val connectionStateFlow: StateFlow<ConnectionState> = _connectionState
 
         /** Direct, same-process access to the live connection — used by [ScreenMirrorService]
          *  to send video frames without routing high-frequency binary data through Intents. */
@@ -719,6 +802,21 @@ class SyncForegroundService : Service() {
                     svc.lastSyncedClipboardText = text
                     svc.connection.sendClipboardUpdate(text)
                     android.util.Log.d("SyncForegroundService", "clipboard.update sent to Mac: ${text.take(40)}")
+                }
+            }
+        }
+
+        /** Image counterpart to [reportLocalClipboardText] — same loop-prevention check, against
+         *  the same service instance. `imageBase64` is already PNG-encoded by the caller
+         *  (MainActivity's `checkClipboard`), which is the only place that can actually read the
+         *  clipboard (see that function's doc comment). */
+        fun reportLocalClipboardImage(imageBase64: String) {
+            instance?.let { svc ->
+                if (!svc.appSettingsStore.clipboardSyncEnabled) return
+                if (imageBase64 != svc.lastSyncedClipboardImageBase64) {
+                    svc.lastSyncedClipboardImageBase64 = imageBase64
+                    svc.connection.sendClipboardImageUpdate(imageBase64)
+                    android.util.Log.d("SyncForegroundService", "clipboard.updateImage sent to Mac")
                 }
             }
         }

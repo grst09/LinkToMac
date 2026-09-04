@@ -7,7 +7,8 @@ use tauri::Emitter;
 
 use crate::net::server::AppState;
 use crate::protocol::envelope::{
-    CallLogSyncPayload, ClipboardUpdatePayload, ContactCreateResultPayload,
+    AppsListPayload, CallLogSyncPayload, ClipboardImageUpdatePayload, ClipboardUpdatePayload,
+    ContactCreateResultPayload,
     ContactDeleteResultPayload, ContactUpdateResultPayload, ContactsSyncPayload,
     DeviceStatusPayload, FilesCreateFolderResultPayload, FilesDeleteResultPayload,
     FilesDownloadResultPayload, FilesListResultPayload, FilesRenameResultPayload,
@@ -45,6 +46,10 @@ pub async fn handle(message: Message, state: &std::sync::Arc<AppState>) -> anyho
             );
             *state.device_status.lock().await = Some(payload.clone());
             let _ = state.app_handle.emit("device-status", payload);
+        }
+        "clipboard.updateImage" => {
+            let payload: ClipboardImageUpdatePayload = serde_json::from_value(message.payload)?;
+            crate::clipboard::apply_remote_image_update(state, payload.image_base64).await;
         }
         "clipboard.update" => {
             let payload: ClipboardUpdatePayload = serde_json::from_value(message.payload)?;
@@ -128,6 +133,10 @@ pub async fn handle(message: Message, state: &std::sync::Arc<AppState>) -> anyho
         "mirror.config" => {
             let payload: MirrorConfigPayload = serde_json::from_value(message.payload)?;
             mirror::config(payload, state).await;
+        }
+        "mirror.appsList" => {
+            let payload: AppsListPayload = serde_json::from_value(message.payload)?;
+            mirror::apps_list(payload, state).await;
         }
         "mirror.stopped" => {
             let payload: MirrorStoppedPayload = serde_json::from_value(message.payload)?;

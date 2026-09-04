@@ -17,6 +17,7 @@ import okhttp3.Response
 import okhttp3.WebSocket
 import okhttp3.WebSocketListener
 import okio.ByteString.Companion.toByteString
+import java.util.concurrent.TimeUnit
 import javax.crypto.spec.SecretKeySpec
 
 sealed interface ConnectionState {
@@ -56,7 +57,14 @@ class MacConnection(
     // (e.g. protocolVersion, actions = emptyList()) unless told otherwise — that mismatch would
     // otherwise break decoding on the Mac side.
     private val json = Json { ignoreUnknownKeys = true; encodeDefaults = true }
-    private val client = OkHttpClient()
+    // No `pingInterval` here would leave OkHttp entirely passive about detecting a dead
+    // connection — it just waits for the OS to eventually deliver a read event (data, close, or
+    // error) on the socket, which under Android's background network throttling can be delayed
+    // arbitrarily long. A disconnect the Mac already completed then shows up on the phone's side
+    // as a socket stuck in CLOSE_WAIT for minutes, with `_state` still stubbornly `Connected`
+    // and no error ever fired. Sending a native WebSocket ping every 20s means a truly-dead
+    // connection gets caught by that ping's own failed write within a bounded time instead.
+    private val client = OkHttpClient.Builder().pingInterval(20, TimeUnit.SECONDS).build()
     /** Guards `connect()` end-to-end — see that method's doc comment. */
     private val connectionLock = Any()
     private var webSocket: WebSocket? = null
@@ -78,7 +86,10 @@ class MacConnection(
     var onMirrorSwipeRequested: ((startX: Double, startY: Double, endX: Double, endY: Double, durationMs: Int) -> Unit)? = null
     var onMirrorKeyRequested: ((action: String) -> Unit)? = null
     var onMirrorTextInputRequested: ((text: String) -> Unit)? = null
+    var onMirrorAppsListRequested: (() -> Unit)? = null
+    var onMirrorLaunchAppRequested: ((packageName: String) -> Unit)? = null
     var onClipboardUpdateReceived: ((text: String) -> Unit)? = null
+    var onClipboardImageUpdateReceived: ((imageBase64: String) -> Unit)? = null
     var onFilesListRequested: ((path: String) -> Unit)? = null
     var onFilesDownloadRequested: ((path: String) -> Unit)? = null
     var onFilesUploadRequested: ((path: String, name: String, dataBase64: String, mimeType: String) -> Unit)? = null
@@ -247,9 +258,18 @@ class MacConnection(
                     val payload = json.decodeFromJsonElement<MirrorTextInputPayload>(envelope.payload)
                     onMirrorTextInputRequested?.invoke(payload.text)
                 }
+                "mirror.appsListRequest" -> onMirrorAppsListRequested?.invoke()
+                "mirror.launchApp" -> {
+                    val payload = json.decodeFromJsonElement<LaunchAppPayload>(envelope.payload)
+                    onMirrorLaunchAppRequested?.invoke(payload.packageName)
+                }
                 "clipboard.update" -> {
                     val payload = json.decodeFromJsonElement<ClipboardUpdatePayload>(envelope.payload)
                     onClipboardUpdateReceived?.invoke(payload.text)
+                }
+                "clipboard.updateImage" -> {
+                    val payload = json.decodeFromJsonElement<ClipboardImageUpdatePayload>(envelope.payload)
+                    onClipboardImageUpdateReceived?.invoke(payload.imageBase64)
                 }
                 "files.list" -> {
                     val payload = json.decodeFromJsonElement<FilesListRequestPayload>(envelope.payload)
@@ -429,6 +449,10 @@ class MacConnection(
         send("mirror.config", json.encodeToJsonElement(payload))
     }
 
+    fun sendMirrorAppsList(apps: List<AppInfo>) {
+        send("mirror.appsList", json.encodeToJsonElement(AppsListPayload(apps)))
+    }
+
     fun sendMirrorStopped(reason: String) {
         send("mirror.stopped", json.encodeToJsonElement(MirrorStoppedPayload(reason)))
     }
@@ -436,6 +460,13 @@ class MacConnection(
     fun sendClipboardUpdate(text: String) {
         val payload = ClipboardUpdatePayload(text = text, sourceDeviceId = deviceId, timestamp = System.currentTimeMillis().toDouble())
         send("clipboard.update", json.encodeToJsonElement(payload))
+    }
+
+    fun sendClipboardImageUpdate(imageBase64: String) {
+        val payload = ClipboardImageUpdatePayload(
+            imageBase64 = imageBase64, sourceDeviceId = deviceId, timestamp = System.currentTimeMillis().toDouble()
+        )
+        send("clipboard.updateImage", json.encodeToJsonElement(payload))
     }
 
     fun sendFilesListResult(path: String, entries: List<FileEntry>, error: String? = null) {

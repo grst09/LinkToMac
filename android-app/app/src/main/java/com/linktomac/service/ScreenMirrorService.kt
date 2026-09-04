@@ -131,20 +131,30 @@ class ScreenMirrorService : Service() {
             }
             if (outputIndex < 0) continue
 
-            val outputBuffer = codec.getOutputBuffer(outputIndex)
-            if (outputBuffer != null && bufferInfo.size > 0) {
-                val data = ByteArray(bufferInfo.size)
-                outputBuffer.get(data)
+            // `stopCapture()` cancels this loop's coroutine but doesn't wait for it before
+            // calling `encoder.stop()`/`release()` (coroutine cancellation is cooperative, not
+            // immediate) — so the codec can legitimately die between the `dequeueOutputBuffer`
+            // call above succeeding and these two calls running, same race that call is already
+            // guarded against. Without this, that race crashed the whole app with
+            // `IllegalStateException: Invalid to call during stop()`.
+            try {
+                val outputBuffer = codec.getOutputBuffer(outputIndex)
+                if (outputBuffer != null && bufferInfo.size > 0) {
+                    val data = ByteArray(bufferInfo.size)
+                    outputBuffer.get(data)
 
-                if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
-                    if (!configSent) {
-                        sendConfigIfComplete(data, width, height)?.let { configSent = true }
+                    if (bufferInfo.flags and MediaCodec.BUFFER_FLAG_CODEC_CONFIG != 0) {
+                        if (!configSent) {
+                            sendConfigIfComplete(data, width, height)?.let { configSent = true }
+                        }
+                    } else {
+                        SyncForegroundService.activeConnection()?.sendMirrorFrame(data)
                     }
-                } else {
-                    SyncForegroundService.activeConnection()?.sendMirrorFrame(data)
                 }
+                codec.releaseOutputBuffer(outputIndex, false)
+            } catch (e: IllegalStateException) {
+                break // codec was released out from under us (stopCapture racing this loop)
             }
-            codec.releaseOutputBuffer(outputIndex, false)
         }
     }
 

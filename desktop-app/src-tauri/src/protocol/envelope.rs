@@ -331,12 +331,39 @@ pub struct MirrorTextInputPayload {
     pub text: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AppInfo {
+    pub package_name: String,
+    pub app_name: String,
+    pub icon_base64: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppsListPayload {
+    pub apps: Vec<AppInfo>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LaunchAppPayload {
+    pub package_name: String,
+}
+
 // MARK: - Shared clipboard (Phase 5)
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ClipboardUpdatePayload {
     pub text: String,
+    pub source_device_id: String,
+    pub timestamp: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipboardImageUpdatePayload {
+    pub image_base64: String,
     pub source_device_id: String,
     pub timestamp: f64,
 }

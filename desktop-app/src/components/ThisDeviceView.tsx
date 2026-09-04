@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Battery,
@@ -7,10 +8,13 @@ import {
   CheckCircle2,
   ChevronRight,
   Clipboard as ClipboardIcon,
+  Link2,
   QrCode,
   Smartphone,
+  Unlink2,
   Wifi,
   X,
+  XCircle,
   type LucideIcon,
 } from "lucide-react";
 import QRCode from "qrcode";
@@ -46,9 +50,11 @@ export function ThisDeviceView() {
   const connected = status === "connected";
 
   const [qrDataUrl, setQrDataUrl] = useState<string | null>(null);
+  const [pairingStatus, setPairingStatus] = useState<"waiting" | "success" | "failed">("waiting");
   const [error, setError] = useState<string | null>(null);
   const [devices, setDevices] = useState<PairedDeviceSummary[]>([]);
   const [discoveryEnabled, setDiscoveryEnabled] = useState(true);
+  const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     invoke<boolean>("get_discovery_enabled").then(setDiscoveryEnabled);
@@ -72,11 +78,38 @@ export function ThisDeviceView() {
       .catch((e) => setError(String(e)));
   }, []);
 
-  // The QR code is only useful until the phone actually pairs — once `connection` store flips
-  // to connected (the "paired" event), dismiss it instead of leaving a stale code on screen.
+  // Once `connection` store flips to connected (the "paired" event) while the modal is open,
+  // show a brief success state before dismissing — an instant close would flash past too fast
+  // for the checkmark to actually register.
   useEffect(() => {
-    if (connected) setQrDataUrl(null);
-  }, [connected]);
+    if (connected && qrDataUrl) {
+      setPairingStatus("success");
+      closeTimerRef.current = setTimeout(() => setQrDataUrl(null), 1200);
+      return () => {
+        if (closeTimerRef.current) clearTimeout(closeTimerRef.current);
+      };
+    }
+  }, [connected, qrDataUrl]);
+
+  // A rejected handshake (stale/expired/reused pairing token) — shown as a failure state and,
+  // unlike success, does NOT auto-close: the user needs to see it went wrong and decide whether
+  // to retry (a fresh "Pair New Device" click) or cancel.
+  useEffect(() => {
+    if (!qrDataUrl) return;
+    const unlisten = listen("pairing-failed", () => setPairingStatus("failed"));
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [qrDataUrl]);
+
+  useEffect(() => {
+    if (!qrDataUrl) return;
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key === "Escape") setQrDataUrl(null);
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [qrDataUrl]);
 
   useEffect(() => {
     refreshDevices();
@@ -84,6 +117,7 @@ export function ThisDeviceView() {
 
   async function beginPairing() {
     setError(null);
+    setPairingStatus("waiting");
     try {
       // Pairing a new device needs an actual reachable listening socket — a QR code pointing at
       // a closed port would just fail to connect with no clear reason why. Deliberately starting
@@ -92,7 +126,7 @@ export function ThisDeviceView() {
       if (!discoveryEnabled) await toggleDiscovery(true);
       const payload = await invoke<PairingQrPayload>("begin_pairing");
       const dataUrl = await QRCode.toDataURL(JSON.stringify(payload), {
-        width: 220,
+        width: 280,
         margin: 1,
       });
       setQrDataUrl(dataUrl);
@@ -105,6 +139,17 @@ export function ThisDeviceView() {
     try {
       await invoke("forget_device", { id });
       refreshDevices();
+    } catch (e) {
+      setError(String(e));
+    }
+  }
+
+  /** Severs the live connection without forgetting the pairing — the "disconnected" event this
+   *  triggers (see net/server.rs's `disconnect_device`) updates `useConnectionStore` on its own,
+   *  same as any other disconnect, so no local state update is needed here beyond the error path. */
+  async function disconnect(id: string) {
+    try {
+      await invoke("disconnect_device", { id });
     } catch (e) {
       setError(String(e));
     }
@@ -178,27 +223,6 @@ export function ThisDeviceView() {
             />
           </div>
 
-          <AnimatePresence>
-            {qrDataUrl && (
-              <motion.div
-                initial={{ opacity: 0, scale: 0.95, height: 0 }}
-                animate={{ opacity: 1, scale: 1, height: "auto" }}
-                exit={{ opacity: 0, scale: 0.95, height: 0 }}
-                className="mt-3 inline-flex flex-col items-start gap-3 rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 p-4 shadow-soft"
-              >
-                <img src={qrDataUrl} alt="Pairing QR code" className="rounded-lg" />
-                <p className="text-xs text-neutral-500 dark:text-neutral-400">
-                  Scan this with the LinkToMac app on your phone.
-                </p>
-                <button
-                  onClick={() => setQrDataUrl(null)}
-                  className="text-xs font-medium text-neutral-500 hover:text-neutral-700 dark:text-neutral-400 dark:hover:text-neutral-200"
-                >
-                  Cancel
-                </button>
-              </motion.div>
-            )}
-          </AnimatePresence>
           {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
         </div>
 
@@ -212,14 +236,83 @@ export function ThisDeviceView() {
             <ul className="space-y-1.5">
               <AnimatePresence>
                 {devices.map((d, i) => (
-                  <PairedDeviceRow key={d.id} device={d} index={i} onForget={() => forget(d.id)} />
+                  <PairedDeviceRow
+                    key={d.id}
+                    device={d}
+                    index={i}
+                    onForget={() => forget(d.id)}
+                    onDisconnect={() => disconnect(d.id)}
+                  />
                 ))}
               </AnimatePresence>
             </ul>
           )}
         </div>
       </div>
+
+      <AnimatePresence>
+        {qrDataUrl && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={() => setQrDataUrl(null)}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-8"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 8 }}
+              onClick={(e) => e.stopPropagation()}
+              className="flex w-[360px] flex-col items-center gap-5 rounded-2xl border border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900 p-8 shadow-soft-hover"
+            >
+              <div className="text-center">
+                <p className="text-lg font-bold text-neutral-900 dark:text-neutral-100">Pair New Device</p>
+                <p className="mt-1 text-sm text-neutral-500 dark:text-neutral-400">
+                  Scan this with the LinkToMac app on your phone.
+                </p>
+              </div>
+
+              <img src={qrDataUrl} alt="Pairing QR code" className="h-[280px] w-[280px] rounded-lg" />
+
+              <PairingStatusLine status={pairingStatus} />
+
+              <button
+                onClick={() => setQrDataUrl(null)}
+                className="rounded-lg bg-black/[0.04] px-4 py-1.5 text-sm font-medium text-neutral-600 hover:bg-black/[0.07] dark:bg-white/10 dark:text-neutral-300 dark:hover:bg-white/15 transition-colors"
+              >
+                Cancel
+              </button>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
+  );
+}
+
+function PairingStatusLine({ status }: { status: "waiting" | "success" | "failed" }) {
+  if (status === "success") {
+    return (
+      <p className="flex items-center gap-1.5 text-sm font-medium text-emerald-600 dark:text-emerald-400">
+        <CheckCircle2 className="h-4 w-4" />
+        Paired!
+      </p>
+    );
+  }
+  if (status === "failed") {
+    return (
+      <p className="flex items-center gap-1.5 text-sm font-medium text-red-500 dark:text-red-400">
+        <XCircle className="h-4 w-4" />
+        Pairing failed — try again
+      </p>
+    );
+  }
+  return (
+    <p className="flex items-center gap-1.5 text-sm font-medium text-neutral-500 dark:text-neutral-400">
+      <span className="h-1.5 w-1.5 rounded-full bg-neutral-400 animate-pulse" />
+      Waiting to pair…
+    </p>
   );
 }
 
@@ -313,11 +406,24 @@ function PairedDeviceRow({
   device,
   index,
   onForget,
+  onDisconnect,
 }: {
   device: PairedDeviceSummary;
   index: number;
   onForget: () => void;
+  onDisconnect: () => void;
 }) {
+  // Guards against a second click queuing a second close frame on the same connection before
+  // the `disconnected` event's revision bump has re-fetched `is_active: false` — the Rust side
+  // now tears the connection down cleanly either way (see net/server.rs), but there's no reason
+  // to send a redundant close, and disabling makes the click feel like it did something instead
+  // of appearing to no-op until the list refreshes.
+  const [disconnecting, setDisconnecting] = useState(false);
+
+  useEffect(() => {
+    if (!device.is_active) setDisconnecting(false);
+  }, [device.is_active]);
+
   return (
     <AnimatedListRow
       index={index}
@@ -333,10 +439,23 @@ function PairedDeviceRow({
         </p>
         <p className="text-xs text-neutral-400 dark:text-neutral-500">Android</p>
       </div>
-      {device.is_active && (
-        <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 dark:text-emerald-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
-          Connected
+      {device.is_active ? (
+        <button
+          onClick={() => {
+            setDisconnecting(true);
+            onDisconnect();
+          }}
+          disabled={disconnecting}
+          title="Disconnect this device"
+          className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-[11px] font-medium text-emerald-600 hover:bg-emerald-500/20 disabled:opacity-60 dark:text-emerald-400 transition-colors"
+        >
+          <Link2 className="h-3 w-3" />
+          {disconnecting ? "Disconnecting…" : "Connected"}
+        </button>
+      ) : (
+        <span className="flex items-center gap-1 rounded-full bg-red-500/10 px-2 py-0.5 text-[11px] font-medium text-red-600 dark:text-red-400">
+          <Unlink2 className="h-3 w-3" />
+          Disconnected
         </span>
       )}
       <button

@@ -22,8 +22,8 @@ use tokio_tungstenite::WebSocketStream;
 use crate::crypto::secure_channel::{self, SecureChannelError};
 use crate::net::local_network;
 use crate::protocol::envelope::{
-    EmptyPayload, EncryptedFrame, HelloAckPayload, HelloPayload, Message, PairingQrPayload,
-    ServerHelloPayload,
+    EmptyPayload, EncryptedFrame, HelloAckPayload, HelloPayload, Message, MirrorStoppedPayload,
+    PairingQrPayload, ServerHelloPayload,
 };
 use crate::protocol::envelope::SyncSettingsPayload;
 use crate::store::identity::IdentityStore;
@@ -72,6 +72,11 @@ pub struct AppState {
     /// just arrived from the other side. Matches `ClipboardSyncManager.swift`'s single
     /// `lastSyncedText` exactly (not separate sent/received trackers).
     pub clipboard_last_synced: Mutex<Option<String>>,
+    /// Same loop-prevention role as `clipboard_last_synced`, for images — kept as a separate
+    /// field (raw PNG bytes) rather than folded into one "last synced content" slot, since a
+    /// text copy and an image copy can legitimately follow each other on the same device
+    /// without either one needing to know about the other's content.
+    pub clipboard_last_synced_image: Mutex<Option<Vec<u8>>>,
     /// Newest-first, capped at 100 — every accepted copy from either device, for the Clipboard
     /// section's history view. See `clipboard::record_history`.
     pub clipboard_history: Mutex<Vec<crate::clipboard::ClipboardEntry>>,
@@ -138,6 +143,7 @@ impl AppState {
             notifications: Mutex::new(Vec::new()),
             device_status: Mutex::new(None),
             clipboard_last_synced: Mutex::new(None),
+            clipboard_last_synced_image: Mutex::new(None),
             clipboard_history: Mutex::new(Vec::new()),
             calls: Mutex::new(Vec::new()),
             messages: Mutex::new(crate::messages::MessageState::default()),
@@ -244,6 +250,28 @@ pub async fn forget_device(
         .await
         .remove(&id)
         .map_err(|e| e.to_string())
+}
+
+/// Severs the live connection without forgetting the pairing — unlike `forget_device`, the
+/// phone can reconnect on its own later with no re-pair needed. Sending a WebSocket close frame
+/// through the same outbound channel `send_to_active` uses is enough: the per-connection task's
+/// read loop sees the resulting close and falls through to its own cleanup (clearing
+/// `active_connection`/`active_device_id`, emitting `disconnected`) exactly as it would for any
+/// other disconnect — no separate teardown path needed here.
+#[tauri::command]
+pub async fn disconnect_device(
+    state: tauri::State<'_, Arc<AppState>>,
+    id: String,
+) -> Result<(), String> {
+    let active_id = state.active_device_id.lock().await.clone();
+    if active_id.as_deref() != Some(id.as_str()) {
+        return Ok(()); // not the currently-connected device — nothing to sever
+    }
+    let guard = state.active_connection.lock().await;
+    if let Some(conn) = guard.as_ref() {
+        let _ = conn.sender.send(WsMessage::Close(None));
+    }
+    Ok(())
 }
 
 /// Tauri command: starts a new pairing session (single-use token, matching
@@ -434,6 +462,11 @@ async fn handle_connection(
                 addr,
                 device_id_for_log
             );
+            // Lets the "Pair New Device" QR modal show a failure state instead of sitting on
+            // "Waiting to pair" forever — only reachable via an actual rejected handshake (a
+            // stale/expired/reused pairing token), not a phone that simply never connects at
+            // all (there's nothing to reject in that case).
+            let _ = state.app_handle.emit("pairing-failed", ());
             send_reject(&mut write).await?;
             return Ok(());
         }
@@ -515,13 +548,36 @@ async fn handle_connection(
                         }
                     }
                     WsMessage::Close(_) => break,
+                    // tokio-tungstenite normally auto-replies to a protocol-level ping, but only
+                    // when it owns both halves of the stream together — splitting into `write`/
+                    // `read` (as this function does) breaks that, so a ping falling through to
+                    // the catch-all below would just be silently dropped. The phone's OkHttp
+                    // client sends exactly these (its `pingInterval` keepalive) and fails the
+                    // whole connection if a pong doesn't arrive in time, so this reply is load-
+                    // bearing, not just protocol politeness.
+                    WsMessage::Ping(payload) => {
+                        if let Err(e) = write.send(WsMessage::Pong(payload)).await {
+                            tracing::warn!("failed to send pong to {}: {}", addr, e);
+                            break;
+                        }
+                    }
                     _ => {}
                 }
             }
             outgoing = outbound_rx.recv() => {
                 let Some(msg) = outgoing else { continue };
+                // A sent close frame ends this connection's write half — tungstenite errors any
+                // further send on it ("Sending after closing is not allowed"). Without this
+                // early exit, `disconnect_device`'s close (or any future close-sending code)
+                // would leave the task looping, waiting to be surprised into an ugly warning
+                // and forced disconnect by the *next* legitimate outbound message instead of
+                // shutting down cleanly right here.
+                let is_close = matches!(msg, WsMessage::Close(_));
                 if let Err(e) = write.send(msg).await {
                     tracing::warn!("failed to send outbound message to {}: {}", addr, e);
+                    break;
+                }
+                if is_close {
                     break;
                 }
             }
@@ -538,6 +594,26 @@ async fn handle_connection(
         *active = None;
     }
     drop(active);
+
+    // A dropped connection means mirroring is over whether or not the phone got to say so —
+    // it only sends `mirror.stopped` on a graceful stop, so without this an unexpected drop
+    // (phone off Wi-Fi, app killed) leaves the Screen Mirroring view stuck showing "Mirroring"
+    // with a frozen/black frame and a live-looking Stop button forever.
+    let was_mirroring = {
+        let mut mirror = state.mirror.lock().await;
+        let was_active = mirror.is_active;
+        if was_active {
+            mirror.clear_channel();
+            mirror.stopped("error".to_string());
+        }
+        was_active
+    };
+    if was_mirroring {
+        let _ = state
+            .app_handle
+            .emit("mirror-stopped", MirrorStoppedPayload { reason: "error".to_string() });
+    }
+
     let _ = state.app_handle.emit(
         "disconnected",
         DisconnectedEvent {

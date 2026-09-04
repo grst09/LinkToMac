@@ -281,11 +281,35 @@ data class MirrorTextInputPayload(
     val text: String
 )
 
+@Serializable
+data class AppInfo(
+    val packageName: String,
+    val appName: String,
+    val iconBase64: String
+)
+
+@Serializable
+data class AppsListPayload(
+    val apps: List<AppInfo>
+)
+
+@Serializable
+data class LaunchAppPayload(
+    val packageName: String
+)
+
 // Phase 5: shared clipboard
 
 @Serializable
 data class ClipboardUpdatePayload(
     val text: String,
+    val sourceDeviceId: String,
+    val timestamp: Double // epoch millis
+)
+
+@Serializable
+data class ClipboardImageUpdatePayload(
+    val imageBase64: String, // PNG
     val sourceDeviceId: String,
     val timestamp: Double // epoch millis
 )

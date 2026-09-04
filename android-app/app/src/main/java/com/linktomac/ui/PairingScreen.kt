@@ -81,7 +81,6 @@ import com.linktomac.ui.components.LinkCard
 import com.linktomac.ui.components.ListItemCard
 import com.linktomac.ui.components.PillButton
 import com.linktomac.ui.components.PillOutlinedButton
-import kotlinx.coroutines.delay
 
 @Composable
 fun PairingScreen(
@@ -130,14 +129,13 @@ fun PairingScreen(
         // `SyncForegroundService.pair`), so the notification only appears once pairing is
         // genuinely in progress.
         if (paired) onStartService()
-        // The foreground service's onCreate() runs asynchronously after startForegroundService()
-        // returns, so its connection StateFlow isn't available on the same frame. This also
-        // covers the not-yet-paired case above: it keeps polling until the scan-triggered
-        // `pair()` call starts the service on its own.
-        while (SyncForegroundService.connectionState() == null) {
-            delay(50)
-        }
-        SyncForegroundService.connectionState()?.collect { connectionState = it }
+        // A companion-level flow that outlives any single service instance — see its doc
+        // comment. Collecting it directly (rather than reaching into a specific instance's own
+        // `connection.state`) means this stays correct even if the service gets killed and
+        // recreated later (e.g. after dropping out of the foreground state while disconnected —
+        // see SyncForegroundService's notification handling), without needing to notice or
+        // re-subscribe when that happens.
+        SyncForegroundService.connectionStateFlow.collect { connectionState = it }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current

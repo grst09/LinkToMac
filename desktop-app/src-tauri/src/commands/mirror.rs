@@ -5,8 +5,8 @@ use tauri::ipc::{Channel, InvokeResponseBody};
 
 use crate::net::server::{send_to_active, AppState};
 use crate::protocol::envelope::{
-    EmptyPayload, MirrorConfigPayload, MirrorKeyPayload, MirrorSwipePayload, MirrorTapPayload,
-    MirrorTextInputPayload,
+    AppInfo, EmptyPayload, LaunchAppPayload, MirrorConfigPayload, MirrorKeyPayload,
+    MirrorSwipePayload, MirrorTapPayload, MirrorTextInputPayload,
 };
 
 #[derive(Serialize)]
@@ -14,6 +14,7 @@ pub struct MirrorStateSnapshot {
     is_active: bool,
     config: Option<MirrorConfigPayload>,
     stopped_reason: Option<String>,
+    apps: Vec<AppInfo>,
 }
 
 #[tauri::command]
@@ -23,7 +24,25 @@ pub async fn get_mirror_state(state: tauri::State<'_, Arc<AppState>>) -> Result<
         is_active: mirror.is_active,
         config: mirror.config.clone(),
         stopped_reason: mirror.stopped_reason.clone(),
+        apps: mirror.apps.clone(),
     })
+}
+
+/// Fire-and-forget re-request — same shape as `refresh_contacts`. The grid already populates
+/// automatically once mirroring starts (see `dispatch::mirror::config`); this is for a manual
+/// refresh (e.g. after installing a new app on the phone).
+#[tauri::command]
+pub async fn request_mirror_apps(state: tauri::State<'_, Arc<AppState>>) -> Result<(), String> {
+    send_to_active(&state, "mirror.appsListRequest", &EmptyPayload {})
+        .await
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub async fn launch_mirror_app(state: tauri::State<'_, Arc<AppState>>, package_name: String) -> Result<(), String> {
+    send_to_active(&state, "mirror.launchApp", &LaunchAppPayload { package_name })
+        .await
+        .map_err(|e| e.to_string())
 }
 
 /// Registers the decoded-frame channel and asks the phone to start capturing. The phone brings

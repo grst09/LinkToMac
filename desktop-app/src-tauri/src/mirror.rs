@@ -13,7 +13,7 @@ use openh264::formats::YUVSource;
 use openh264::nal_units;
 use tauri::ipc::{Channel, InvokeResponseBody};
 
-use crate::protocol::envelope::MirrorConfigPayload;
+use crate::protocol::envelope::{AppInfo, MirrorConfigPayload};
 use crate::store::settings::MirrorQuality;
 
 // The Performance/Balanced/Quality downscale + forward-rate caps live on `MirrorQuality` itself
@@ -34,6 +34,10 @@ pub struct MirrorState {
     /// Send half of the current session's frame handoff — see `FrameSlot`. `None` when no
     /// decode thread is running.
     frame_slot: Option<FrameSlot>,
+    /// The phone's launchable-apps list for the mirroring app-grid — requested once
+    /// `mirror.config` arrives (see `dispatch::mirror::config`), refreshed on demand via the
+    /// `request_mirror_apps` command.
+    pub apps: Vec<AppInfo>,
 }
 
 impl MirrorState {
@@ -43,6 +47,10 @@ impl MirrorState {
 
     pub fn clear_channel(&mut self) {
         self.frame_channel = None;
+    }
+
+    pub fn set_apps(&mut self, apps: Vec<AppInfo>) {
+        self.apps = apps;
     }
 
     /// Builds a fresh decoder, primes it with the SPS/PPS parameter sets from `mirror.config`,
