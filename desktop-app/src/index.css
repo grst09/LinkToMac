@@ -43,3 +43,79 @@ input,
 textarea {
   user-select: text;
 }
+
+/* Notes rich-text editor content (TipTap/ProseMirror) — Tailwind's preflight strips default
+   list/heading styling, and Tailwind utility classes can't target elements TipTap renders
+   internally (headings/lists/checkboxes), so this is real CSS instead of inline classNames. */
+.note-rich-content {
+  font-size: 14px;
+  line-height: 1.6;
+  color: rgb(38 38 38);
+  user-select: text;
+}
+.dark .note-rich-content {
+  color: rgb(229 229 229);
+}
+.note-rich-content p {
+  margin: 0.25em 0;
+}
+.note-rich-content h1 {
+  font-size: 1.25em;
+  font-weight: 700;
+  margin: 0.6em 0 0.3em;
+}
+.note-rich-content ul,
+.note-rich-content ol {
+  padding-left: 1.4em;
+  margin: 0.25em 0;
+}
+.note-rich-content ul {
+  list-style: disc;
+}
+.note-rich-content ol {
+  list-style: decimal;
+}
+.note-rich-content li {
+  margin: 0.15em 0;
+}
+.note-rich-content li p {
+  margin: 0;
+}
+.note-rich-content ul[data-type="taskList"] {
+  list-style: none;
+  padding-left: 0;
+}
+.note-rich-content ul[data-type="taskList"] li {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5em;
+}
+.note-rich-content ul[data-type="taskList"] li > label {
+  margin-top: 0.2em;
+  user-select: none;
+}
+.note-rich-content ul[data-type="taskList"] input[type="checkbox"] {
+  accent-color: #eab308;
+  cursor: pointer;
+}
+.note-rich-content ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: rgb(163 163 163);
+  text-decoration: line-through;
+}
+.dark .note-rich-content ul[data-type="taskList"] li[data-checked="true"] > div {
+  color: rgb(115 115 115);
+}
+.note-rich-content img {
+  max-height: 18rem;
+  width: 100%;
+  object-fit: cover;
+  border-radius: 0.5rem;
+  margin: 0.5em 0;
+}
+.note-rich-content p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  pointer-events: none;
+  color: rgb(163 163 163);
+}

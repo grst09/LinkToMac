@@ -1,5 +1,14 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import { EditorContent, useEditor, useEditorState, type Editor, type JSONContent } from "@tiptap/react";
+import StarterKit from "@tiptap/starter-kit";
+import TaskList from "@tiptap/extension-task-list";
+import TaskItem from "@tiptap/extension-task-item";
+import TiptapImage from "@tiptap/extension-image";
+import Placeholder from "@tiptap/extension-placeholder";
+import { Extension } from "@tiptap/core";
+import { Plugin, PluginKey } from "@tiptap/pm/state";
+import { DecorationSet, Decoration } from "@tiptap/pm/view";
 import {
   Plus,
   Trash2,
@@ -15,11 +24,18 @@ import {
   X,
   Check,
   ImagePlus,
+  Bold,
+  Italic,
+  Strikethrough,
+  Heading1,
+  List,
+  ListOrdered,
+  ListChecks,
 } from "lucide-react";
 import { SectionHeader } from "./SectionHeader";
 import { SearchBar } from "./SearchBar";
 import { ResizableDivider } from "./ResizableDivider";
-import { ConfirmDialog, Placeholder } from "./ContactDetail";
+import { ConfirmDialog, Placeholder as EmptyState } from "./ContactDetail";
 import { sectionMeta } from "../theme/sections";
 import { relativeTime } from "../utils/relativeTime";
 import {
@@ -107,78 +123,140 @@ function compressImageFile(file: File): Promise<string> {
   });
 }
 
-/** Images live inline in the body as standard markdown image tokens (`![](data:...)`) instead of
- *  a separate field — see `NoteEditPanel` for why (a plain `<textarea>` can't render a picture
- *  inline, so the body gets parsed into alternating text/image "blocks" for editing and
- *  re-serialized back into one string, image tokens included, on every autosave). This keeps the
- *  wire format (`body: String`, unchanged on both Rust and Kotlin) and the offline-edit queue
- *  (`store/pending_note_mutations.rs`) completely unaware images exist at all. */
-const IMAGE_TOKEN_RE = /!\[\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)\)/g;
-const IMAGE_TOKEN_RE_ONCE = /!\[\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)\)/;
-
-interface TextBlock {
-  type: "text";
-  id: string;
-  text: string;
-}
-interface ImageBlock {
-  type: "image";
-  id: string;
-  dataUrl: string;
-}
-type NoteBlock = TextBlock | ImageBlock;
-
-let blockIdCounter = 0;
-function newBlockId(): string {
-  blockIdCounter += 1;
-  return `blk${blockIdCounter}`;
+// --- Legacy body migration -----------------------------------------------------------------
+// Every note's `body` used to be plain text with markdown-ish syntax (**bold**, - [ ] checklist,
+// ![](data:...) inline images) — see git history for the old implementation. The editor is now a
+// real rich-text document (TipTap/ProseMirror) and `body` is HTML, but nothing about the wire
+// format itself changed: it's still just a `String` field on both Rust and Kotlin, sent through
+// exactly the same create/update calls. A note saved before this change still has old-format text
+// sitting in that field, so it needs a one-time, best-effort conversion into equivalent HTML the
+// first time it's opened — after that, saving it back writes real HTML and the note never needs
+// migrating again.
+function looksLikeHtml(body: string): boolean {
+  return /^\s*</.test(body);
 }
 
-function parseBlocks(body: string): NoteBlock[] {
-  const blocks: NoteBlock[] = [];
-  let lastIndex = 0;
-  for (const match of body.matchAll(IMAGE_TOKEN_RE)) {
-    const idx = match.index ?? 0;
-    if (idx > lastIndex) blocks.push({ type: "text", id: newBlockId(), text: body.slice(lastIndex, idx) });
-    blocks.push({ type: "image", id: newBlockId(), dataUrl: match[1] });
-    lastIndex = idx + match[0].length;
+// Builds the migrated note as a ProseMirror JSON document (node type names + attrs) instead of an
+// HTML string. That's not a style choice — an earlier version of this hand-built raw HTML
+// (`<li data-checked="...">`, guessing at TaskItem's exact expected markup) silently failed:
+// TipTap's HTML *parser* didn't recognize the shape and produced an empty checklist plus the real
+// text dumped into a plain bullet list instead. The JSON node-type/attrs shape below (`taskItem`
+// with `attrs: { checked }`, etc.) is TipTap's own documented, stable schema representation, so
+// there's no guessing at internal parseHTML rules involved.
+const LEGACY_IMAGE_TOKEN_RE = /!\[\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)\)/g;
+const LEGACY_SOLO_IMAGE_RE = /^!\[\]\((data:image\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=]+)\)$/;
+const LEGACY_CHECKLIST_RE = /^-\s*\[([ xX])\]\s*(.*)$/;
+const LEGACY_BULLET_RE = /^-\s+(.*)$/;
+const LEGACY_NUMBERED_RE = /^\d+\.\s+(.*)$/;
+const LEGACY_HEADING_RE = /^#\s+(.*)$/;
+const LEGACY_INLINE_RE = /(\*\*)([^*]+?)\*\*|(~~)([^~]+?)~~|(\*)([^*]+?)\*/g;
+
+/** Splits inline bold/italic/strikethrough markdown runs into ProseMirror text nodes carrying the
+ *  corresponding mark. ProseMirror text nodes can't be empty, so a run with no text (an edge case
+ *  from adjacent/empty markers) is dropped rather than included as invalid content. */
+function parseInlineRuns(text: string): JSONContent[] {
+  const runs: JSONContent[] = [];
+  let cursor = 0;
+  for (const m of text.matchAll(LEGACY_INLINE_RE)) {
+    const idx = m.index ?? 0;
+    if (idx > cursor) runs.push({ type: "text", text: text.slice(cursor, idx) });
+    const [, boldMarker, boldContent, strikeMarker, strikeContent, , italicContent] = m;
+    if (boldMarker) runs.push({ type: "text", text: boldContent, marks: [{ type: "bold" }] });
+    else if (strikeMarker) runs.push({ type: "text", text: strikeContent, marks: [{ type: "strike" }] });
+    else runs.push({ type: "text", text: italicContent, marks: [{ type: "italic" }] });
+    cursor = idx + m[0].length;
   }
-  if (lastIndex < body.length || blocks.length === 0) {
-    blocks.push({ type: "text", id: newBlockId(), text: body.slice(lastIndex) });
-  }
-  return normalizeBlocks(blocks);
+  if (cursor < text.length) runs.push({ type: "text", text: text.slice(cursor) });
+  return runs.filter((r) => (r.text?.length ?? 0) > 0);
 }
 
-/** Merges adjacent text blocks (e.g. after an image is removed) and guarantees there's always at
- *  least one text block to type into, even in a note that's entirely images. */
-function normalizeBlocks(blocks: NoteBlock[]): NoteBlock[] {
-  const merged: NoteBlock[] = [];
-  for (const block of blocks) {
-    const prev = merged[merged.length - 1];
-    if (block.type === "text" && prev?.type === "text") {
-      prev.text += block.text;
+function inlineOrEmpty(text: string): JSONContent[] | undefined {
+  const runs = parseInlineRuns(text);
+  return runs.length > 0 ? runs : undefined;
+}
+
+type OpenListType = "bulletList" | "orderedList" | "taskList";
+
+function migrateLegacyBodyToDoc(body: string): JSONContent {
+  const content: JSONContent[] = [];
+  let openList: { type: OpenListType; items: JSONContent[] } | null = null;
+  function closeList() {
+    if (!openList) return;
+    content.push({ type: openList.type, content: openList.items });
+    openList = null;
+  }
+  function ensureList(type: OpenListType) {
+    if (openList?.type !== type) {
+      closeList();
+      openList = { type, items: [] };
+    }
+    return openList;
+  }
+
+  for (const rawLine of body.split("\n")) {
+    const trimmed = rawLine.trim();
+    const soloImage = LEGACY_SOLO_IMAGE_RE.exec(trimmed);
+    if (soloImage) {
+      closeList();
+      content.push({ type: "image", attrs: { src: soloImage[1] } });
+      continue;
+    }
+    if (trimmed === "") {
+      closeList();
+      continue;
+    }
+
+    const checklistMatch = LEGACY_CHECKLIST_RE.exec(trimmed);
+    const bulletMatch = !checklistMatch && LEGACY_BULLET_RE.exec(trimmed);
+    const numberedMatch = !checklistMatch && !bulletMatch && LEGACY_NUMBERED_RE.exec(trimmed);
+    const headingMatch = !checklistMatch && !bulletMatch && !numberedMatch && LEGACY_HEADING_RE.exec(trimmed);
+
+    if (checklistMatch) {
+      const checked = checklistMatch[1].toLowerCase() === "x";
+      ensureList("taskList")!.items.push({
+        type: "taskItem",
+        attrs: { checked },
+        content: [{ type: "paragraph", content: inlineOrEmpty(checklistMatch[2]) }],
+      });
+    } else if (bulletMatch) {
+      ensureList("bulletList")!.items.push({
+        type: "listItem",
+        content: [{ type: "paragraph", content: inlineOrEmpty(bulletMatch[1]) }],
+      });
+    } else if (numberedMatch) {
+      ensureList("orderedList")!.items.push({
+        type: "listItem",
+        content: [{ type: "paragraph", content: inlineOrEmpty(numberedMatch[1]) }],
+      });
+    } else if (headingMatch) {
+      closeList();
+      content.push({ type: "heading", attrs: { level: 1 }, content: inlineOrEmpty(headingMatch[1]) });
     } else {
-      merged.push({ ...block });
+      closeList();
+      // Any other inline image token mid-line (rare — legacy notes essentially always split
+      // images onto their own line, handled above) is just dropped from the plain paragraph
+      // rather than guessed at further.
+      content.push({ type: "paragraph", content: inlineOrEmpty(trimmed.replace(LEGACY_IMAGE_TOKEN_RE, "")) });
     }
   }
-  if (merged.length === 0 || merged[merged.length - 1].type === "image") {
-    merged.push({ type: "text", id: newBlockId(), text: "" });
+  closeList();
+  return { type: "doc", content: content.length > 0 ? content : [{ type: "paragraph" }] };
+}
+
+/** What actually gets handed to `useEditor({ content: ... })`. A legacy `imageBase64` cover image
+ *  (this app's feature before inline images existed) only ever needs prepending when `body` is
+ *  still in the old plain-text format — once a note has been through this editor and saved back
+ *  as HTML, the field stops being written at all (see `createNote`/`updateNote` callers below,
+ *  which always pass `null` for it). A body that's already HTML (this editor's own prior output)
+ *  is passed straight through as a string — TipTap's HTML parser round-trips its *own* output
+ *  reliably; it was only ever a hand-built migration guess that it choked on. */
+function buildInitialContent(body: string, legacyImage: string | null): string | JSONContent {
+  if (looksLikeHtml(body)) return body;
+  const doc = migrateLegacyBodyToDoc(body);
+  if (legacyImage) {
+    doc.content = [{ type: "image", attrs: { src: imageSrc(legacyImage) } }, ...(doc.content ?? [])];
   }
-  return merged;
-}
-
-function serializeBlocks(blocks: NoteBlock[]): string {
-  return blocks.map((b) => (b.type === "text" ? b.text : `![](${b.dataUrl})`)).join("");
-}
-
-/** A legacy note's single cover image (this session's previous feature, now replaced by inline
- *  images) shows up as a leading inline image the first time the note is opened — the very next
- *  autosave folds it into `body` as a token and the field stops being written, so this only ever
- *  matters for notes that predate inline images. */
-function initialBlocksFor(body: string, legacyImage: string | null): NoteBlock[] {
-  const blocks = parseBlocks(body);
-  if (!legacyImage) return blocks;
-  return normalizeBlocks([{ type: "image", id: newBlockId(), dataUrl: imageSrc(legacyImage) }, ...blocks]);
+  return doc;
 }
 
 interface PreviewLine {
@@ -187,74 +265,116 @@ interface PreviewLine {
   checked?: boolean;
 }
 
-/** Recognizes `- [ ] task` / `- [x] task` markdown-style checklist lines, and strips inline image
- *  tokens out of the displayed text — for the card preview only; the editor itself renders images
- *  as real inline thumbnails (see `NoteEditPanel`). */
-function parsePreviewLines(body: string, maxLines: number): PreviewLine[] {
-  const checklistPattern = /^-\s*\[([ xX])\]\s*(.*)$/;
-  const withoutImages = body.replace(IMAGE_TOKEN_RE, "").trim();
+const MAX_PREVIEW_LINES = 4;
+
+/** Parses the note's HTML body with the browser's own HTML parser (not regex) into card-preview
+ *  lines and a cover image. Headings/lists/checkboxes/images are real elements now, so this just
+ *  walks the parsed tree instead of pattern-matching markdown syntax. */
+function parseNotePreview(body: string): { lines: PreviewLine[]; coverImage: string | null } {
+  const container = document.createElement("div");
+  container.innerHTML = body;
+
+  const coverImage = container.querySelector("img")?.getAttribute("src") ?? null;
+
   const lines: PreviewLine[] = [];
-  for (const raw of withoutImages.split("\n")) {
-    const line = raw.trim();
-    if (!line) continue;
-    if (lines.length >= maxLines) break;
-    const match = checklistPattern.exec(line);
-    if (match) {
-      lines.push({ text: match[2] || "(empty)", checked: match[1].toLowerCase() === "x" });
+  for (const el of Array.from(container.querySelectorAll("p, h1, li"))) {
+    if (lines.length >= MAX_PREVIEW_LINES) break;
+    // A <p> nested inside a list item is already covered by walking that <li> directly (via
+    // textContent below) — counting it again as its own top-level line would duplicate it.
+    if (el.tagName === "P" && el.closest("li")) continue;
+    const isTaskItem = el.tagName === "LI" && el.hasAttribute("data-checked");
+    // A task item's <li> also contains a visually-hidden accessibility label ("Task item
+    // checkbox for …") alongside the real text — el.textContent would pick up both, since that
+    // label is only hidden with CSS, not actually removed from the DOM. Its real content lives
+    // in the <div> that follows the <label>, so read from there instead of the whole <li>.
+    const text = (isTaskItem ? el.querySelector(":scope > div") : el)?.textContent?.trim() ?? "";
+    if (!text) continue;
+    if (isTaskItem) {
+      lines.push({ text, checked: el.getAttribute("data-checked") === "true" });
     } else {
-      lines.push({ text: line });
+      lines.push({ text });
     }
   }
-  return lines;
+  return { lines, coverImage };
 }
 
-/** The card grid's cover thumbnail: the first inline image found anywhere in the body, falling
- *  back to a legacy note's `imageBase64` field if it hasn't been opened (and thus migrated to an
- *  inline token) yet. */
-function extractCoverImage(body: string, legacyImage: string | null | undefined): string | null {
-  const match = IMAGE_TOKEN_RE_ONCE.exec(body);
-  if (match) return match[1];
-  return legacyImage ? imageSrc(legacyImage) : null;
+// --- Find & replace over the live ProseMirror document --------------------------------------
+interface DocMatch {
+  from: number;
+  to: number;
 }
 
-/** A match's position is local to the single text block it was found in — image blocks aren't
- *  searchable, and a query never matches across a block boundary (a picture splitting one search
- *  across two blocks is treated as two separate non-matches, which is the right call: there's no
- *  sensible way to "replace" text that has an image in the middle of it). */
-interface Match {
-  blockId: string;
-  start: number;
-  end: number;
-}
-
-/** Plain case-insensitive substring search, non-overlapping — good enough for find/replace in a
- *  note body and avoids ever building a RegExp out of user-typed (unescaped) text. */
-function findMatchesInText(text: string, query: string): { start: number; end: number }[] {
+/** Case-insensitive, non-overlapping substring search over the document's text nodes. A query
+ *  spanning two adjacent text nodes (e.g. crossing a bold/plain boundary within one paragraph)
+ *  won't match — a narrow limitation carried over from the old block-based search rather than a
+ *  newly introduced one. */
+function findDocMatches(editor: Editor, query: string): DocMatch[] {
   if (!query) return [];
-  const haystack = text.toLowerCase();
   const needle = query.toLowerCase();
-  const matches: { start: number; end: number }[] = [];
-  let from = 0;
-  while (from <= haystack.length - needle.length) {
-    const idx = haystack.indexOf(needle, from);
-    if (idx === -1) break;
-    matches.push({ start: idx, end: idx + needle.length });
-    from = idx + needle.length;
-  }
+  const matches: DocMatch[] = [];
+  editor.state.doc.descendants((node, pos) => {
+    if (!node.isText || !node.text) return;
+    const haystack = node.text.toLowerCase();
+    let from = 0;
+    while (from <= haystack.length - needle.length) {
+      const idx = haystack.indexOf(needle, from);
+      if (idx === -1) break;
+      matches.push({ from: pos + idx, to: pos + idx + needle.length });
+      from = idx + needle.length;
+    }
+  });
   return matches;
 }
 
-function findMatches(blocks: NoteBlock[], query: string): Match[] {
-  if (!query) return [];
-  const matches: Match[] = [];
-  for (const block of blocks) {
-    if (block.type !== "text") continue;
-    for (const m of findMatchesInText(block.text, query)) {
-      matches.push({ blockId: block.id, ...m });
-    }
-  }
-  return matches;
+interface SearchHighlightStorage {
+  matches: DocMatch[];
+  activeIndex: number;
 }
+
+// TipTap's own `Storage` interface is empty by default — this is its documented pattern for
+// giving `editor.storage.searchHighlight` a real type instead of `any`.
+declare module "@tiptap/core" {
+  interface Storage {
+    searchHighlight: SearchHighlightStorage;
+  }
+}
+
+/** Renders find/replace matches as decorations directly over the live document. Driven by
+ *  mutating this extension's own storage (see the effect in NoteEditPanel that does this) plus a
+ *  no-op transaction dispatch to make ProseMirror recompute and repaint them — these highlights
+ *  are UI-only and have no business becoming part of the document's own undo history, which is
+ *  why they're plain storage rather than editor state. */
+const SearchHighlight = Extension.create<Record<string, never>, SearchHighlightStorage>({
+  name: "searchHighlight",
+  addStorage() {
+    return { matches: [], activeIndex: -1 };
+  },
+  addProseMirrorPlugins() {
+    const extensionStorage = this.storage;
+    return [
+      new Plugin({
+        key: new PluginKey("searchHighlight"),
+        props: {
+          decorations(state) {
+            const { matches, activeIndex } = extensionStorage;
+            if (matches.length === 0) return null;
+            return DecorationSet.create(
+              state.doc,
+              matches.map((m, i) =>
+                Decoration.inline(m.from, m.to, {
+                  class:
+                    i === activeIndex
+                      ? "search-match-active rounded-[2px] bg-red-500 px-0.5 text-white"
+                      : "rounded-[2px] underline decoration-red-500 decoration-2 underline-offset-2",
+                }),
+              ),
+            );
+          },
+        },
+      }),
+    ];
+  },
+});
 
 export function NotesView() {
   const { notes, pending, loaded, lastError, pendingMutationIds } = useNotesStore();
@@ -365,9 +485,9 @@ export function NotesView() {
           <SearchBar value={searchText} onChange={setSearchText} placeholder="Search notes" />
           <div className="flex-1 overflow-y-auto">
             {!loaded ? null : combined.length === 0 ? (
-              <Placeholder icon={FileText} text="No notes yet" />
+              <EmptyState icon={FileText} text="No notes yet" />
             ) : filtered.length === 0 ? (
-              <Placeholder icon={SearchIcon} text="No matching notes" />
+              <EmptyState icon={SearchIcon} text="No matching notes" />
             ) : (
               sections.map(([label, items]) => (
                 <div key={label}>
@@ -418,7 +538,7 @@ export function NotesView() {
               updatedAt={selected.updatedAt}
             />
           ) : (
-            <Placeholder icon={FileText} text="Select a note" />
+            <EmptyState icon={FileText} text="Select a note" />
           )}
         </div>
       </div>
@@ -440,8 +560,8 @@ function NoteCard({
   onDelete: () => void;
 }) {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
-  const previewLines = useMemo(() => parsePreviewLines(note.body, 4), [note.body]);
-  const coverImage = useMemo(() => extractCoverImage(note.body, note.imageBase64), [note.body, note.imageBase64]);
+  const { lines: previewLines, coverImage: parsedCover } = useMemo(() => parseNotePreview(note.body), [note.body]);
+  const coverImage = parsedCover ?? (note.imageBase64 ? imageSrc(note.imageBase64) : null);
 
   return (
     <div className="mb-3 break-inside-avoid">
@@ -559,13 +679,11 @@ function NoteCard({
  *  For a brand-new note (`isDraft`), the first non-empty edit creates it; further edits made
  *  before the real id comes back are flushed once `noteId` arrives (see the effect below).
  *
- *  The body is edited as a sequence of "blocks" — text runs and inline images — rather than one
- *  plain string, since a `<textarea>` can't render a picture inline. Each text block is its own
- *  auto-growing textarea (see `NoteTextBlock`); images sit between them as real `<img>` elements.
- *  Inserting an image (via the toolbar button, a paste, or a drop) splits whichever text block
- *  currently has focus at its caret and splices the image in between the two halves. On every
- *  autosave the blocks are re-joined into one string (images re-emitted as `![](data:...)`
- *  tokens — see `serializeBlocks`/`parseBlocks` above). */
+ *  The body is now a single TipTap (ProseMirror) rich-text document instead of a plain string
+ *  with markdown-ish syntax — bold/italic/strike/headings/lists/checklists/images are real nodes,
+ *  and `editor.getHTML()` is what gets sent as `body` on every autosave (see buildInitialContent /
+ *  migrateLegacyBodyToDoc above for how an older, pre-rich-text note gets converted the first
+ *  time it's opened). */
 function NoteEditPanel({
   noteId,
   isDraft,
@@ -584,23 +702,47 @@ function NoteEditPanel({
   updatedAt: number | null;
 }) {
   const [title, setTitle] = useState(initialTitle);
-  const [blocks, setBlocks] = useState<NoteBlock[]>(() => initialBlocksFor(initialBody, initialImage));
   const [imageDragOver, setImageDragOver] = useState(false);
   const [imageError, setImageError] = useState<string | null>(null);
-  const [pendingFocusBlockId, setPendingFocusBlockId] = useState<string | null>(null);
-
-  const blockRefs = useRef<Record<string, HTMLTextAreaElement | null>>({});
-  const lastFocusedBlockIdRef = useRef<string | null>(null);
+  const [bodyVersion, setBodyVersion] = useState(0);
 
   const dirtyRef = useRef(false);
   const createdRef = useRef(false);
-  const latestRef = useRef({ title, blocks, isDraft, noteId });
-  latestRef.current = { title, blocks, isDraft, noteId };
+  const latestRef = useRef({ title, isDraft, noteId });
+  latestRef.current = { title, isDraft, noteId };
+
+  const editor = useEditor({
+    editable: canEdit,
+    content: buildInitialContent(initialBody, initialImage),
+    extensions: [
+      StarterKit.configure({
+        heading: { levels: [1] },
+        codeBlock: false,
+        blockquote: false,
+        horizontalRule: false,
+        code: false,
+      }),
+      TaskList,
+      TaskItem.configure({ nested: false }),
+      TiptapImage,
+      Placeholder.configure({ placeholder: "Start typing…" }),
+      SearchHighlight,
+    ],
+    editorProps: {
+      attributes: { class: "note-rich-content focus:outline-none" },
+    },
+    onUpdate: () => {
+      dirtyRef.current = true;
+      setBodyVersion((v) => v + 1);
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   function flush() {
-    const { title, blocks, isDraft, noteId } = latestRef.current;
+    if (!editor) return;
+    const { title, isDraft, noteId } = latestRef.current;
     const t = title.trim();
-    const b = serializeBlocks(blocks).trim();
+    const b = editor.isEmpty ? "" : editor.getHTML();
     if (!t && !b) return;
     if (isDraft) {
       if (!createdRef.current) {
@@ -617,65 +759,12 @@ function NoteEditPanel({
     }
   }
 
-  /** Splits the target block's text at its current caret and splices a new image block between
-   *  the two halves, focusing the new trailing half. `blockId` is the block to target (the one
-   *  a paste happened in, or the last-focused one for a toolbar-button/drop insert) — falls back
-   *  to the end of the last text block if it isn't a real, current text block (e.g. nothing's
-   *  been focused yet in a brand-new note). */
-  function insertImageAt(dataUrl: string, blockId: string | null) {
-    // Reads `blocks` directly from this render's closure rather than via a functional `setBlocks`
-    // updater — deliberately, since calling `setPendingFocusBlockId` as a side effect from inside
-    // an updater would violate React's purity contract for updaters (they can run more than once
-    // per commit). A plain closure read is safe here: this only ever fires once per discrete user
-    // action (a paste, a drop, a button click), so there's no risk of it seeing stale state.
-    let targetIdx = blockId ? blocks.findIndex((b) => b.id === blockId && b.type === "text") : -1;
-    if (targetIdx < 0) {
-      for (let i = blocks.length - 1; i >= 0; i--) {
-        if (blocks[i].type === "text") {
-          targetIdx = i;
-          break;
-        }
-      }
-    }
-    if (targetIdx < 0) return; // unreachable — normalizeBlocks guarantees a trailing text block
-    const target = blocks[targetIdx] as TextBlock;
-    const el = blockId ? blockRefs.current[blockId] : null;
-    const caret = el && target.id === blockId ? (el.selectionStart ?? target.text.length) : target.text.length;
-    const before = target.text.slice(0, caret);
-    const after = target.text.slice(caret);
-    const afterBlock: TextBlock = { type: "text", id: newBlockId(), text: after };
-    // Drop the leading half entirely when it's empty (e.g. pasting into a fresh note, or at the
-    // very start of a line) rather than keeping it as a zero-content block — otherwise it sits
-    // there as a second, redundant "Start typing…" placeholder right above the image, alongside
-    // the real one in `afterBlock` below.
-    const beforeBlocks: NoteBlock[] = before ? [{ ...target, text: before }] : [];
-    const next: NoteBlock[] = [
-      ...blocks.slice(0, targetIdx),
-      ...beforeBlocks,
-      { type: "image", id: newBlockId(), dataUrl },
-      afterBlock,
-      ...blocks.slice(targetIdx + 1),
-    ];
-    setBlocks(normalizeBlocks(next));
-    setPendingFocusBlockId(afterBlock.id);
-    dirtyRef.current = true;
-  }
-
-  // Focus + place the caret at the start of the freshly-inserted trailing text block, once it's
-  // actually mounted (normalizeBlocks can merge it into a neighbor, so it may not exist by id —
-  // in that case there's simply nothing to focus and the next render's ref lookup no-ops).
   useEffect(() => {
-    if (!pendingFocusBlockId) return;
-    const el = blockRefs.current[pendingFocusBlockId];
-    if (el) {
-      el.focus();
-      el.setSelectionRange(0, 0);
-    }
-    setPendingFocusBlockId(null);
-  }, [pendingFocusBlockId, blocks]);
+    editor?.setEditable(canEdit);
+  }, [editor, canEdit]);
 
-  async function insertImageFile(file: File | null | undefined, blockId: string | null) {
-    if (!file) return;
+  async function insertImageFile(file: File | null | undefined) {
+    if (!file || !editor) return;
     if (!file.type.startsWith("image/")) {
       setImageError("That's not an image file");
       setTimeout(() => setImageError(null), 3000);
@@ -683,21 +772,11 @@ function NoteEditPanel({
     }
     try {
       const base64 = await compressImageFile(file);
-      insertImageAt(imageSrc(base64), blockId);
+      editor.chain().focus().setImage({ src: imageSrc(base64) }).run();
     } catch {
       setImageError("Couldn't read that image");
       setTimeout(() => setImageError(null), 3000);
     }
-  }
-
-  function updateTextBlock(blockId: string, text: string) {
-    setBlocks((prev) => prev.map((b) => (b.id === blockId && b.type === "text" ? { ...b, text } : b)));
-    dirtyRef.current = true;
-  }
-
-  function removeImageBlock(blockId: string) {
-    setBlocks((prev) => normalizeBlocks(prev.filter((b) => b.id !== blockId)));
-    dirtyRef.current = true;
   }
 
   useEffect(() => {
@@ -705,7 +784,7 @@ function NoteEditPanel({
     const timer = setTimeout(flush, AUTOSAVE_DELAY_MS);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [title, blocks, isDraft, noteId]);
+  }, [title, bodyVersion, isDraft, noteId]);
 
   // Flush on unmount too, so switching notes right after typing doesn't drop the last edit.
   useEffect(() => {
@@ -715,18 +794,32 @@ function NoteEditPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // --- Find & replace, scoped to this note's body -------------------------------------------
+  // --- Formatting toolbar state -------------------------------------------------------------
+  const toolbarState = useEditorState({
+    editor,
+    selector: (ctx) => ({
+      bold: ctx.editor?.isActive("bold") ?? false,
+      italic: ctx.editor?.isActive("italic") ?? false,
+      strike: ctx.editor?.isActive("strike") ?? false,
+      heading: ctx.editor?.isActive("heading", { level: 1 }) ?? false,
+      taskList: ctx.editor?.isActive("taskList") ?? false,
+      bulletList: ctx.editor?.isActive("bulletList") ?? false,
+      orderedList: ctx.editor?.isActive("orderedList") ?? false,
+    }),
+  });
+
+  // --- Find & replace, scoped to this note's document ---------------------------------------
   const [findOpen, setFindOpen] = useState(false);
   const [findQuery, setFindQuery] = useState("");
   const [replaceQuery, setReplaceQuery] = useState("");
   const [matchIndex, setMatchIndex] = useState(0);
-
   const findInputRef = useRef<HTMLInputElement>(null);
-  const activeMarkRef = useRef<HTMLElement>(null);
 
-  const matches = useMemo(() => findMatches(blocks, findQuery), [blocks, findQuery]);
-  const showHighlights = findOpen && matches.length > 0;
-  const activeMatch = matches[matchIndex];
+  const matches = useMemo(
+    () => (editor ? findDocMatches(editor, findQuery) : []),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [editor, findQuery, bodyVersion],
+  );
 
   useEffect(() => setMatchIndex(0), [findQuery]);
   useEffect(() => {
@@ -739,13 +832,20 @@ function NoteEditPanel({
     findInputRef.current?.select();
   }, [findOpen]);
 
-  // Keep the active match in view. Each text block now auto-grows to fit its own content instead
-  // of scrolling internally — the panel itself is the one scroll container — so a plain
-  // scrollIntoView on the active <mark> replaces the old manual offsetTop math that used to sync
-  // one shared textarea's scroll position against its overlay.
+  // Drives the SearchHighlight extension's decorations from plain mutable storage (see that
+  // extension's own comment) and scrolls the active match into view — mirrors the old
+  // activeMarkRef.scrollIntoView, just against the editor's real DOM instead of a plain <mark>.
   useEffect(() => {
-    activeMarkRef.current?.scrollIntoView({ block: "center" });
-  }, [matchIndex, matches, showHighlights]);
+    if (!editor) return;
+    editor.storage.searchHighlight.matches = findOpen ? matches : [];
+    editor.storage.searchHighlight.activeIndex = matchIndex;
+    editor.view.dispatch(editor.state.tr);
+    if (findOpen && matches.length > 0) {
+      requestAnimationFrame(() => {
+        editor.view.dom.querySelector(".search-match-active")?.scrollIntoView({ block: "center" });
+      });
+    }
+  }, [editor, matches, matchIndex, findOpen]);
 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
@@ -780,159 +880,116 @@ function NoteEditPanel({
   }
 
   function replaceCurrent() {
-    if (!canEdit || matches.length === 0) return;
+    if (!canEdit || !editor || matches.length === 0) return;
     const m = matches[matchIndex];
-    setBlocks((prev) =>
-      prev.map((b) =>
-        b.type === "text" && b.id === m.blockId
-          ? { ...b, text: b.text.slice(0, m.start) + replaceQuery + b.text.slice(m.end) }
-          : b,
-      ),
-    );
-    dirtyRef.current = true;
+    const chain = editor.chain().focus();
+    if (replaceQuery === "") chain.deleteRange(m).run();
+    else chain.insertContentAt(m, { type: "text", text: replaceQuery }).run();
   }
 
   function replaceAll() {
-    if (!canEdit || matches.length === 0) return;
-    const byBlock = new Map<string, Match[]>();
-    for (const m of matches) {
-      const list = byBlock.get(m.blockId);
-      if (list) list.push(m);
-      else byBlock.set(m.blockId, [m]);
+    if (!canEdit || !editor || matches.length === 0) return;
+    // Reverse order so each match's precomputed {from, to} stays valid as earlier (larger-
+    // position) replacements shift everything after them — nothing after the *first* remaining
+    // match ever needs its position adjusted this way.
+    let chain = editor.chain().focus();
+    for (let i = matches.length - 1; i >= 0; i--) {
+      const m = matches[i];
+      chain = replaceQuery === "" ? chain.deleteRange(m) : chain.insertContentAt(m, { type: "text", text: replaceQuery });
     }
-    setBlocks((prev) =>
-      prev.map((b) => {
-        if (b.type !== "text") return b;
-        const blockMatches = byBlock.get(b.id);
-        if (!blockMatches) return b;
-        let result = "";
-        let cursor = 0;
-        for (const m of blockMatches) {
-          result += b.text.slice(cursor, m.start) + replaceQuery;
-          cursor = m.end;
-        }
-        result += b.text.slice(cursor);
-        return { ...b, text: result };
-      }),
-    );
-    dirtyRef.current = true;
+    chain.run();
     setMatchIndex(0);
   }
 
+  if (!editor) return null;
+
   return (
-    <div className="flex h-full flex-col overflow-y-auto">
-      <motion.div
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.2 }}
-        onDragOver={(e) => {
-          if (!canEdit) return;
-          e.preventDefault();
-          setImageDragOver(true);
-        }}
-        onDragLeave={() => setImageDragOver(false)}
-        onDrop={(e) => {
-          e.preventDefault();
-          setImageDragOver(false);
-          if (canEdit) insertImageFile(e.dataTransfer.files?.[0], lastFocusedBlockIdRef.current);
-        }}
-        className={`relative flex flex-1 flex-col gap-3 px-6 pb-6 pt-8 ${
-          imageDragOver ? "ring-2 ring-inset ring-yellow-500/50" : ""
-        }`}
-      >
-        {imageError && <p className="text-xs text-red-500 dark:text-red-400">{imageError}</p>}
-
-        <div className="-mt-1 flex items-center justify-between">
-          <p className="text-xs text-neutral-400 dark:text-neutral-500">
-            {updatedAt != null ? `Last edited ${relativeTime(updatedAt)}` : ""}
-          </p>
-          <div className="flex items-center gap-0.5">
-            {canEdit && (
-              <ImagePicker onPick={(file) => insertImageFile(file, lastFocusedBlockIdRef.current)} />
-            )}
-            <button
-              onClick={() => setFindOpen(true)}
-              title="Find & Replace (⌘F)"
-              className="rounded-md p-1 text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-            >
-              <SearchIcon className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        </div>
-
-        <input
-          autoFocus
-          value={title}
-          disabled={!canEdit}
-          onChange={(e) => {
-            setTitle(e.target.value);
-            dirtyRef.current = true;
-          }}
-          placeholder="Title"
-          className="w-full bg-transparent text-xl font-bold text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none disabled:opacity-60"
+    <div className="flex h-full flex-col">
+      <div className="border-b border-black/5 dark:border-white/10">
+        <p className="px-6 pb-1 pt-3 text-xs text-neutral-400 dark:text-neutral-500">
+          {updatedAt != null ? `Last edited ${relativeTime(updatedAt)}` : ""}
+        </p>
+        <FormattingToolbar
+          canEdit={canEdit}
+          state={toolbarState}
+          onBold={() => editor.chain().focus().toggleBold().run()}
+          onItalic={() => editor.chain().focus().toggleItalic().run()}
+          onStrike={() => editor.chain().focus().toggleStrike().run()}
+          onHeading={() => editor.chain().focus().toggleHeading({ level: 1 }).run()}
+          onChecklist={() => editor.chain().focus().toggleTaskList().run()}
+          onBulletList={() => editor.chain().focus().toggleBulletList().run()}
+          onOrderedList={() => editor.chain().focus().toggleOrderedList().run()}
+          onInsertImage={insertImageFile}
+          onOpenFind={() => setFindOpen(true)}
         />
+      </div>
 
-        <div className="flex flex-1 flex-col gap-2">
-          {blocks.map((block) =>
-            block.type === "image" ? (
-              <div key={block.id} className="group/image relative shrink-0 overflow-hidden rounded-lg">
-                <img src={block.dataUrl} alt="" className="max-h-72 w-full object-cover" />
-                {canEdit && (
-                  <button
-                    onClick={() => removeImageBlock(block.id)}
-                    title="Remove image"
-                    className="absolute right-2 top-2 flex h-7 w-7 items-center justify-center rounded-full bg-black/50 text-white opacity-0 transition-opacity hover:bg-black/70 group-hover/image:opacity-100"
-                  >
-                    <X className="h-4 w-4" />
-                  </button>
-                )}
-              </div>
-            ) : (
-              <NoteTextBlock
-                key={block.id}
-                block={block}
-                canEdit={canEdit}
-                matches={matches}
-                activeMatch={activeMatch}
-                showHighlights={showHighlights}
-                activeMarkRef={activeMarkRef}
-                registerRef={(el) => {
-                  blockRefs.current[block.id] = el;
-                }}
-                onFocusBlock={() => {
-                  lastFocusedBlockIdRef.current = block.id;
-                }}
-                onChangeText={(text) => updateTextBlock(block.id, text)}
-                onPasteImage={(file) => insertImageFile(file, block.id)}
-                // "Start typing…" only makes sense when this is the *only* block — i.e. the note
-                // is genuinely empty. An empty block that exists purely to hold the caret next to
-                // an image (there's always at least one, by construction — see `normalizeBlocks`)
-                // would otherwise show the same placeholder floating below real content, which
-                // reads as a leftover/duplicate prompt rather than an empty editor.
-                showPlaceholder={blocks.length === 1}
-              />
-            ),
-          )}
-        </div>
+      <div className="flex-1 overflow-y-auto">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.2 }}
+          onDragOver={(e) => {
+            if (!canEdit) return;
+            e.preventDefault();
+            setImageDragOver(true);
+          }}
+          onDragLeave={() => setImageDragOver(false)}
+          onDrop={(e) => {
+            e.preventDefault();
+            setImageDragOver(false);
+            if (canEdit) insertImageFile(e.dataTransfer.files?.[0]);
+          }}
+          onPaste={(e) => {
+            if (!canEdit) return;
+            const imageItem = Array.from(e.clipboardData?.items ?? []).find((item) =>
+              item.type.startsWith("image/"),
+            );
+            const file = imageItem?.getAsFile();
+            if (file) {
+              e.preventDefault();
+              insertImageFile(file);
+            }
+          }}
+          className={`relative flex flex-1 flex-col gap-3 px-6 pb-6 pt-6 ${
+            imageDragOver ? "ring-2 ring-inset ring-yellow-500/50" : ""
+          }`}
+        >
+          {imageError && <p className="text-xs text-red-500 dark:text-red-400">{imageError}</p>}
 
-        {findOpen && (
-          <FindReplaceBar
-            inputRef={findInputRef}
-            findQuery={findQuery}
-            onFindQueryChange={setFindQuery}
-            replaceQuery={replaceQuery}
-            onReplaceQueryChange={setReplaceQuery}
-            matchCount={matches.length}
-            matchIndex={matchIndex}
-            canEdit={canEdit}
-            onNext={goNext}
-            onPrev={goPrev}
-            onReplace={replaceCurrent}
-            onReplaceAll={replaceAll}
-            onClose={closeFind}
+          <input
+            autoFocus
+            value={title}
+            disabled={!canEdit}
+            onChange={(e) => {
+              setTitle(e.target.value);
+              dirtyRef.current = true;
+            }}
+            placeholder="Title"
+            className="w-full bg-transparent text-xl font-bold text-neutral-900 dark:text-neutral-100 placeholder:text-neutral-400 focus:outline-none disabled:opacity-60"
           />
-        )}
-      </motion.div>
+
+          <EditorContent editor={editor} />
+
+          {findOpen && (
+            <FindReplaceBar
+              inputRef={findInputRef}
+              findQuery={findQuery}
+              onFindQueryChange={setFindQuery}
+              replaceQuery={replaceQuery}
+              onReplaceQueryChange={setReplaceQuery}
+              matchCount={matches.length}
+              matchIndex={matchIndex}
+              canEdit={canEdit}
+              onNext={goNext}
+              onPrev={goPrev}
+              onReplace={replaceCurrent}
+              onReplaceAll={replaceAll}
+              onClose={closeFind}
+            />
+          )}
+        </motion.div>
+      </div>
     </div>
   );
 }
@@ -951,130 +1008,101 @@ function ImagePicker({ onPick }: { onPick: (file: File | null | undefined) => vo
           e.target.value = "";
         }}
       />
-      <button
-        onClick={() => fileInputRef.current?.click()}
-        title="Insert image"
-        className="rounded-md p-1 text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-      >
-        <ImagePlus className="h-3.5 w-3.5" />
-      </button>
+      <ToolbarButton icon={ImagePlus} title="Insert image" onClick={() => fileInputRef.current?.click()} />
     </>
   );
 }
 
-/** One text block of the body — an auto-growing `<textarea>` (no internal scrolling; the whole
- *  panel scrolls instead) with its own highlight overlay for whatever find/replace matches fall
- *  within it. Reused for every text run between images. */
-function NoteTextBlock({
-  block,
+interface ToolbarActiveState {
+  bold: boolean;
+  italic: boolean;
+  strike: boolean;
+  heading: boolean;
+  taskList: boolean;
+  bulletList: boolean;
+  orderedList: boolean;
+}
+
+/** Pinned above the scrollable body (a sibling of the scroll container, not inside it) so it
+ *  stays put regardless of scroll position, the way a toolbar in a full-featured notes app does —
+ *  unlike FindReplaceBar, which sits at the bottom of the note's own content and can scroll out of
+ *  view for a long note. Search stays available even for a read-only (canEdit false) note — only
+ *  the buttons that would actually change the note's content are hidden in that case. */
+function FormattingToolbar({
   canEdit,
-  matches,
-  activeMatch,
-  showHighlights,
-  activeMarkRef,
-  registerRef,
-  onFocusBlock,
-  onChangeText,
-  onPasteImage,
-  showPlaceholder,
+  state,
+  onBold,
+  onItalic,
+  onStrike,
+  onHeading,
+  onChecklist,
+  onBulletList,
+  onOrderedList,
+  onInsertImage,
+  onOpenFind,
 }: {
-  block: TextBlock;
   canEdit: boolean;
-  matches: Match[];
-  activeMatch: Match | undefined;
-  showHighlights: boolean;
-  activeMarkRef: React.RefObject<HTMLElement | null>;
-  registerRef: (el: HTMLTextAreaElement | null) => void;
-  onFocusBlock: () => void;
-  onChangeText: (text: string) => void;
-  onPasteImage: (file: File | null | undefined) => void;
-  showPlaceholder: boolean;
+  state: ToolbarActiveState;
+  onBold: () => void;
+  onItalic: () => void;
+  onStrike: () => void;
+  onHeading: () => void;
+  onChecklist: () => void;
+  onBulletList: () => void;
+  onOrderedList: () => void;
+  onInsertImage: (file: File | null | undefined) => void;
+  onOpenFind: () => void;
 }) {
-  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const localMatches = useMemo(() => matches.filter((m) => m.blockId === block.id), [matches, block.id]);
-  const blockShowsHighlights = showHighlights && localMatches.length > 0;
-
-  // Grows to fit content on every change — typing, a Replace/Replace All, or an image being
-  // spliced in/out next to it (which changes this block's text via the split/merge).
-  useLayoutEffect(() => {
-    const el = textareaRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${el.scrollHeight}px`;
-  }, [block.text]);
-
   return (
-    <div className="relative">
-      {blockShowsHighlights && (
-        <div
-          aria-hidden
-          className="pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words p-0 text-[14px] leading-relaxed text-neutral-800 dark:text-neutral-200"
-        >
-          {renderHighlighted(block.text, localMatches, activeMatch, activeMarkRef)}
-        </div>
+    <div className="flex items-center gap-0.5 px-4 pb-2">
+      {canEdit && (
+        <>
+          <ToolbarButton icon={Bold} title="Bold (⌘B)" active={state.bold} onClick={onBold} />
+          <ToolbarButton icon={Italic} title="Italic (⌘I)" active={state.italic} onClick={onItalic} />
+          <ToolbarButton icon={Strikethrough} title="Strikethrough" active={state.strike} onClick={onStrike} />
+          <div className="mx-1.5 h-4 w-px bg-black/10 dark:bg-white/10" />
+          <ToolbarButton icon={Heading1} title="Heading" active={state.heading} onClick={onHeading} />
+          <ToolbarButton icon={ListChecks} title="Checklist" active={state.taskList} onClick={onChecklist} />
+          <ToolbarButton icon={List} title="Bulleted list" active={state.bulletList} onClick={onBulletList} />
+          <ToolbarButton icon={ListOrdered} title="Numbered list" active={state.orderedList} onClick={onOrderedList} />
+          <div className="mx-1.5 h-4 w-px bg-black/10 dark:bg-white/10" />
+          <ImagePicker onPick={onInsertImage} />
+        </>
       )}
-      <textarea
-        ref={(el) => {
-          textareaRef.current = el;
-          registerRef(el);
-        }}
-        value={block.text}
-        disabled={!canEdit}
-        rows={1}
-        onFocus={onFocusBlock}
-        onChange={(e) => onChangeText(e.target.value)}
-        onPaste={(e) => {
-          if (!canEdit) return;
-          const imageItem = Array.from(e.clipboardData?.items ?? []).find((item) =>
-            item.type.startsWith("image/"),
-          );
-          const file = imageItem?.getAsFile();
-          if (file) {
-            e.preventDefault();
-            onPasteImage(file);
-          }
-        }}
-        placeholder={showPlaceholder ? "Start typing…" : undefined}
-        className={`block w-full resize-none overflow-hidden bg-transparent p-0 text-[14px] leading-relaxed placeholder:text-neutral-400 focus:outline-none disabled:opacity-60 ${
-          blockShowsHighlights ? "text-transparent caret-neutral-800 dark:caret-neutral-200" : "text-neutral-800 dark:text-neutral-200"
-        }`}
-      />
+      <div className="flex-1" />
+      <ToolbarButton icon={SearchIcon} title="Find & Replace (⌘F)" onClick={onOpenFind} />
     </div>
   );
 }
 
-function renderHighlighted(
-  text: string,
-  matches: Match[],
-  activeMatch: Match | undefined,
-  activeRef: React.RefObject<HTMLElement | null>,
-) {
-  const nodes: React.ReactNode[] = [];
-  let cursor = 0;
-  matches.forEach((m, i) => {
-    if (m.start > cursor) nodes.push(text.slice(cursor, m.start));
-    const isActive = m === activeMatch;
-    nodes.push(
-      <mark
-        key={i}
-        ref={isActive ? activeRef : undefined}
-        className={
-          isActive
-            ? "rounded-[2px] bg-red-500 px-0.5 text-white"
-            : "rounded-[2px] bg-transparent text-inherit underline decoration-red-500 decoration-2 underline-offset-2"
-        }
-      >
-        {text.slice(m.start, m.end)}
-      </mark>,
-    );
-    cursor = m.end;
-  });
-  if (cursor < text.length) nodes.push(text.slice(cursor));
-  // A trailing newline at the very end of a <textarea>'s value doesn't visually add a blank
-  // line in the browser's own rendering unless there's something after it — mirror that with a
-  // trailing space so the overlay's height matches the textarea's exactly.
-  nodes.push(" ");
-  return nodes;
+function ToolbarButton({
+  icon: Icon,
+  title,
+  active,
+  onClick,
+}: {
+  icon: typeof Bold;
+  title: string;
+  active?: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      // A toolbar click would otherwise blur the editor and drop its selection before the click
+      // handler even runs — ProseMirror keeps its last selection internally regardless, but this
+      // avoids the visible focus flicker and matches TipTap's own documented toolbar pattern.
+      onMouseDown={(e) => e.preventDefault()}
+      onClick={onClick}
+      title={title}
+      className={`flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
+        active
+          ? "bg-yellow-500/15 text-yellow-600 dark:text-yellow-400"
+          : "text-neutral-500 dark:text-neutral-400 hover:bg-black/5 dark:hover:bg-white/10"
+      }`}
+    >
+      <Icon className="h-4 w-4" />
+    </button>
+  );
 }
 
 function FindReplaceBar({
