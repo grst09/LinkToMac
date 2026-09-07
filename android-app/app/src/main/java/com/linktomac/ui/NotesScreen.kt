@@ -11,6 +11,7 @@ import androidx.compose.animation.scaleOut
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -23,6 +24,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
@@ -42,6 +44,7 @@ import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Sync
 import androidx.compose.material.icons.outlined.PushPin
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -63,6 +66,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.linktomac.net.NoteEntry
@@ -349,15 +357,22 @@ private fun NoteEditor(
     onTogglePin: (() -> Unit)?
 ) {
     var title by remember { mutableStateOf(existing?.title ?: "") }
-    // The body is a sequence of text/image blocks (see NoteBlocks.kt) rather than a single raw
-    // string, so an inline image synced from the Mac renders as an actual picture instead of a
-    // wall of base64 text — and so it doesn't crash Compose's text layout getting there.
+    // The body is a sequence of blocks (see NoteBlocks.kt) rather than a single raw string, so an
+    // inline image synced from the Mac renders as an actual picture instead of a wall of base64
+    // text, and rich HTML (headings, bold/italic/strike, lists, checklists) from the Mac's
+    // rich-text editor renders with real styling instead of literal tags.
+    //
+    // Whether this note's body is HTML-format is decided once, from what it looked like when
+    // opened, and stays fixed for the whole editing session (see `serializeNoteBlocks`) — a new,
+    // phone-created note (`existing == null`, body "") is never HTML, matching pre-existing
+    // behavior exactly for notes that never touch the Mac's rich editor.
+    val isHtml = remember { (existing?.body ?: "").trimStart().startsWith("<") }
     var blocks by remember { mutableStateOf(initialNoteBlocksFor(existing?.body ?: "", existing?.imageBase64)) }
     var confirmingDelete by remember { mutableStateOf(false) }
     val canSave = title.isNotBlank() || blocks.any {
-        (it is NoteBlock.Text && it.text.isNotBlank()) || it is NoteBlock.Image
+        (it is NoteBlock.Text && it.text.isNotBlank()) || it is NoteBlock.Image || it is NoteBlock.Rich
     }
-    val goBack = { if (canSave) onSave(title.trim(), serializeNoteBlocks(blocks).trim()) else onCancel() }
+    val goBack = { if (canSave) onSave(title.trim(), serializeNoteBlocks(blocks, isHtml).trim()) else onCancel() }
 
     // Without this, the system Back button falls straight through to the Activity (nothing else
     // intercepts it — see MainActivity/NotesScreen, neither uses Navigation's back stack) and
@@ -480,6 +495,25 @@ private fun NoteEditor(
                                     modifier = Modifier.fillMaxWidth()
                                 )
                             }
+                            is NoteBlock.Rich -> {
+                                RichBlockView(
+                                    block = block,
+                                    onTapToEdit = {
+                                        // Tapping a rich block's text edits it in place as plain
+                                        // text — see the trade-off documented on NoteBlock.Rich.
+                                        // This only ever replaces this one block, so siblings'
+                                        // rawHtml is never touched.
+                                        blocks = blocks.map { b ->
+                                            if (b.id == block.id) NoteBlock.Text(b.id, block.display.plainText()) else b
+                                        }
+                                    },
+                                    onToggleTaskItem = { itemIndex ->
+                                        blocks = blocks.map { b ->
+                                            if (b.id == block.id && b is NoteBlock.Rich) toggleTaskItem(b, itemIndex) else b
+                                        }
+                                    }
+                                )
+                            }
                         }
                     }
                 }
@@ -502,6 +536,116 @@ private fun NoteEditor(
                 TextButton(onClick = { confirmingDelete = false }) { Text("Cancel") }
             }
         )
+    }
+}
+
+/** Renders one HTML-parsed rich block (heading/paragraph/bullet-or-numbered list/task list) with
+ *  real Compose styling — actual bold/italic/strikethrough spans, a larger heading, real bullet/
+ *  number markers, and interactive checkboxes for a task list.
+ *
+ *  Tapping a block's text calls [onTapToEdit], which (see the call site) flattens just this block
+ *  to a plain-text field — the least-surprising way to keep the existing "tap to edit" UX without
+ *  building a rich-text toolbar. A task item's checkbox is the one exception: it's wired to
+ *  [onToggleTaskItem] instead, so checking it off updates just that item's `data-checked` in place
+ *  rather than flattening the whole list. */
+@Composable
+private fun RichBlockView(
+    block: NoteBlock.Rich,
+    onTapToEdit: () -> Unit,
+    onToggleTaskItem: (itemIndex: Int) -> Unit
+) {
+    when (val display = block.display) {
+        is RichDisplay.Heading -> {
+            Text(
+                text = runsToAnnotatedString(display.runs),
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onTapToEdit)
+                    .padding(vertical = 10.dp)
+            )
+        }
+        is RichDisplay.Paragraph -> {
+            Text(
+                text = runsToAnnotatedString(display.runs),
+                style = MaterialTheme.typography.bodyLarge,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onTapToEdit)
+                    .padding(vertical = 10.dp, horizontal = 4.dp)
+            )
+        }
+        is RichDisplay.BulletList -> {
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                display.items.forEach { runs ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onTapToEdit)
+                            .padding(vertical = 4.dp, horizontal = 4.dp)
+                    ) {
+                        Text("•", modifier = Modifier.width(20.dp), style = MaterialTheme.typography.bodyLarge)
+                        Text(runsToAnnotatedString(runs), style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        }
+        is RichDisplay.NumberedList -> {
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                display.items.forEachIndexed { index, runs ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable(onClick = onTapToEdit)
+                            .padding(vertical = 4.dp, horizontal = 4.dp)
+                    ) {
+                        Text("${index + 1}.", modifier = Modifier.width(24.dp), style = MaterialTheme.typography.bodyLarge)
+                        Text(runsToAnnotatedString(runs), style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+        }
+        is RichDisplay.TaskList -> {
+            Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+                display.items.forEachIndexed { index, item ->
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 2.dp)
+                    ) {
+                        Checkbox(checked = item.checked, onCheckedChange = { onToggleTaskItem(index) })
+                        Text(
+                            text = runsToAnnotatedString(item.runs),
+                            style = MaterialTheme.typography.bodyLarge,
+                            textDecoration = if (item.checked) TextDecoration.LineThrough else null,
+                            color = if (item.checked) MaterialTheme.colorScheme.onSurfaceVariant else MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier
+                                .weight(1f)
+                                .clickable(onClick = onTapToEdit)
+                                .padding(vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun runsToAnnotatedString(runs: List<InlineRun>) = buildAnnotatedString {
+    for (run in runs) {
+        val start = length
+        append(run.text)
+        if (run.bold || run.italic || run.strike) {
+            addStyle(
+                SpanStyle(
+                    fontWeight = if (run.bold) FontWeight.Bold else null,
+                    fontStyle = if (run.italic) FontStyle.Italic else null,
+                    textDecoration = if (run.strike) TextDecoration.LineThrough else null
+                ),
+                start,
+                length
+            )
+        }
     }
 }
 
