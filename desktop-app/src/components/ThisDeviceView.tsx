@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronRight,
   Clipboard as ClipboardIcon,
+  Laptop,
   Link2,
   QrCode,
   Smartphone,
@@ -335,16 +336,11 @@ function HeroCard({
           : "border-black/5 dark:border-white/10 bg-white dark:bg-neutral-900"
       }`}
     >
-      <span
-        className={`flex h-16 w-16 items-center justify-center rounded-full ${
-          connected ? "bg-emerald-500/15" : "bg-black/[0.04] dark:bg-white/[0.06]"
-        }`}
-      >
-        <Smartphone
-          className={`h-7 w-7 ${connected ? "text-emerald-600 dark:text-emerald-400" : "text-neutral-400"}`}
-          strokeWidth={1.75}
-        />
-      </span>
+      <div className="flex w-full max-w-[280px] items-center">
+        <DeviceNode icon={Laptop} connected={connected} />
+        <ConnectionLink connected={connected} searching={!connected && discoveryEnabled} />
+        <DeviceNode icon={Smartphone} connected={connected} />
+      </div>
 
       <div className="flex flex-col items-center gap-0.5 text-center">
         <p className="text-lg font-bold text-neutral-900 dark:text-neutral-100">
@@ -368,6 +364,63 @@ function HeroCard({
       </div>
 
     </motion.div>
+  );
+}
+
+/** One end of the connection diagram — the Mac or the phone. Same "tinted circle around an
+ *  outlined icon" language the rest of this file already uses (see the old single-icon hero, and
+ *  QuickActionCard below), just reused at both ends of a link instead of once in the middle. */
+function DeviceNode({ icon: Icon, connected }: { icon: LucideIcon; connected: boolean }) {
+  return (
+    <span
+      className={`flex h-14 w-14 shrink-0 items-center justify-center rounded-full transition-colors duration-300 ${
+        connected ? "bg-emerald-500/15" : "bg-black/[0.04] dark:bg-white/[0.06]"
+      }`}
+    >
+      <Icon
+        className={`h-6 w-6 transition-colors duration-300 ${
+          connected ? "text-emerald-600 dark:text-emerald-400" : "text-neutral-400"
+        }`}
+        strokeWidth={1.75}
+      />
+    </span>
+  );
+}
+
+/** The line between the two device nodes. Disconnected is a plain dashed line — it breathes
+ *  gently while discovery is on (this Mac is actively listening for a phone), and sits fully
+ *  still when discovery is off, matching the "Discovery off" copy below it. Connected swaps to a
+ *  solid line with two small dots continuously crossing it in opposite directions, standing in
+ *  for the sync traffic that's genuinely always flowing both ways on an active connection
+ *  (notifications, clipboard, messages) rather than a one-off "transfer complete" animation. */
+function ConnectionLink({ connected, searching }: { connected: boolean; searching: boolean }) {
+  const dotShadow = "0 0 6px 1px rgba(16,185,129,0.55)";
+  return (
+    <div className="relative mx-3 h-6 flex-1">
+      <motion.div
+        className={`absolute inset-x-0 top-1/2 h-px -translate-y-1/2 ${
+          connected ? "bg-emerald-500/40" : "border-t border-dashed border-neutral-300 dark:border-neutral-700"
+        }`}
+        animate={searching ? { opacity: [0.4, 1, 0.4] } : { opacity: 1 }}
+        transition={searching ? { duration: 1.8, repeat: Infinity, ease: "easeInOut" } : undefined}
+      />
+      {connected && (
+        <>
+          <motion.span
+            className="absolute top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-emerald-500"
+            style={{ boxShadow: dotShadow }}
+            animate={{ left: ["0%", "100%"] }}
+            transition={{ duration: 1.6, repeat: Infinity, ease: "linear" }}
+          />
+          <motion.span
+            className="absolute top-1/2 h-1.5 w-1.5 -translate-y-1/2 rounded-full bg-emerald-500"
+            style={{ boxShadow: dotShadow }}
+            animate={{ left: ["100%", "0%"] }}
+            transition={{ duration: 1.6, repeat: Infinity, ease: "linear", delay: 0.8 }}
+          />
+        </>
+      )}
+    </div>
   );
 }
 
