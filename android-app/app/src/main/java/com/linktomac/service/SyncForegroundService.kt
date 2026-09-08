@@ -657,12 +657,23 @@ class SyncForegroundService : Service() {
      *  below could leave this service out of the foreground state, nothing in those paths ever
      *  satisfied the obligation for *that* call.
      *
-     *  Calling `startForeground()` and then immediately `stopForeground()` in the same
-     *  synchronous call (no suspend point in between) satisfies the contract without the
-     *  notification actually flashing visibly — a well-known, deliberate pattern for exactly
-     *  this situation, not a bug. */
+     *  This previously just delegated to [applyForegroundPresentation], which is an *either/or*:
+     *  it calls `startForeground()` when the state should show a notification, or *only*
+     *  `stopForeground()` otherwise. That second branch never actually calls `startForeground()`
+     *  at all — so any action landing here while the state happened to be Idle/Failed (a plain
+     *  Disconnect, a Forget, or a Reconnect attempt that hadn't yet flipped to Connecting) left
+     *  the obligation completely unsatisfied for that `onStartCommand`, and Android killed the
+     *  service a few seconds later (logged as "Stop FGS timeout", and observed as a rapid
+     *  connect → sync → disconnect loop on the Mac side). Calling `startForeground()`
+     *  unconditionally first — then immediately `stopForeground()` right after, same synchronous
+     *  call, no suspend point in between — satisfies the contract in every case without the
+     *  notification actually flashing visibly when it shouldn't be shown. */
     private fun satisfyForegroundContract() {
-        applyForegroundPresentation(connection.state.value)
+        val state = connection.state.value
+        startForeground(NOTIFICATION_ID, buildNotification(state))
+        if (!shouldShowForegroundNotification(state)) {
+            ServiceCompat.stopForeground(this, ServiceCompat.STOP_FOREGROUND_REMOVE)
+        }
     }
 
     private fun buildNotification(state: ConnectionState): Notification {
