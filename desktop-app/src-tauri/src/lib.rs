@@ -44,6 +44,7 @@ pub fn run() {
             net::server::forget_device,
             net::server::disconnect_device,
             commands::list_notifications,
+            commands::refresh_notifications,
             commands::dismiss_notification,
             commands::dismiss_all_notifications,
             commands::get_device_status,

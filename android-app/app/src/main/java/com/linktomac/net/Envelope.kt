@@ -65,12 +65,21 @@ data class NotificationPostedPayload(
     val category: String? = null,
     val postedAt: Double,
     val actions: List<NotificationAction> = emptyList(),
-    val iconBase64: String? = null
+    val iconBase64: String? = null,
+    val ongoing: Boolean = false
 )
 
 @Serializable
 data class NotificationRemovedPayload(
     val id: String
+)
+
+/** Full-snapshot replace of every notification currently showing — see the matching Rust struct
+ *  (`NotificationsSyncPayload`) and `dispatch::notifications::sync`'s doc comment for why this
+ *  exists: recovering from a posted/removed event missed while disconnected. */
+@Serializable
+data class NotificationsSyncPayload(
+    val notifications: List<NotificationPostedPayload>
 )
 
 @Serializable

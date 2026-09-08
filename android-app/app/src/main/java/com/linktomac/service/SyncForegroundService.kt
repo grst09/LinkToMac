@@ -313,6 +313,22 @@ class SyncForegroundService : Service() {
                 scope.launch(Dispatchers.IO) { connection.sendNotesSync(noteStore.readAll()) }
             }
         }
+        connection.onNotificationsRefreshRequested = {
+            if (appSettingsStore.notificationsSyncEnabled) {
+                scope.launch(Dispatchers.IO) {
+                    // Unlike the synchronous dispatch in MacConnection.handleIncoming (which has
+                    // its own catch-and-log around the whole `when`), an exception thrown after
+                    // this coroutine launch wouldn't be caught by that — log it explicitly instead
+                    // of letting it disappear as an unhandled coroutine exception.
+                    try {
+                        val snapshot = PhoneNotificationListenerService.instance?.currentSnapshot() ?: emptyList()
+                        connection.sendNotificationsSync(snapshot)
+                    } catch (e: Exception) {
+                        android.util.Log.e("SyncForegroundService", "notifications.refresh failed", e)
+                    }
+                }
+            }
+        }
         connection.onNoteCreateRequested = { payload ->
             scope.launch(Dispatchers.IO) {
                 if (!appSettingsStore.notesSyncEnabled) {

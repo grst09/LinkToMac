@@ -15,8 +15,8 @@ use crate::protocol::envelope::{
     FilesTransferResultPayload, FilesUploadResultPayload, Message, MirrorConfigPayload,
     MirrorStoppedPayload, NoteCreateResultPayload, NoteDeleteResultPayload,
     NoteUpdateResultPayload, NotesSyncPayload, NotificationPostedPayload,
-    NoteSetPinnedResultPayload, NotificationRemovedPayload, PhotoFullPayload, PhotoPagePayload,
-    SmsSyncPayload, SyncSettingsPayload,
+    NoteSetPinnedResultPayload, NotificationRemovedPayload, NotificationsSyncPayload, PhotoFullPayload,
+    PhotoPagePayload, SmsSyncPayload, SyncSettingsPayload,
 };
 
 pub mod contacts;
@@ -36,6 +36,10 @@ pub async fn handle(message: Message, state: &std::sync::Arc<AppState>) -> anyho
         "notification.removed" => {
             let payload: NotificationRemovedPayload = serde_json::from_value(message.payload)?;
             notifications::removed(payload, state).await;
+        }
+        "notifications.sync" => {
+            let payload: NotificationsSyncPayload = serde_json::from_value(message.payload)?;
+            notifications::sync(payload, state).await;
         }
         "device.status" => {
             let payload: DeviceStatusPayload = serde_json::from_value(message.payload)?;

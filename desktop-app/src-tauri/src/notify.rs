@@ -47,9 +47,6 @@ pub fn post(app: &tauri::AppHandle, notification: &NotificationPostedPayload) {
 }
 
 /// See module doc — this can't actually clear the OS banner on desktop today, kept as a named
-/// no-op (rather than deleted) so the call sites in dispatch.rs/commands/notifications.rs stay
+/// no-op (rather than deleted) so the call sites in commands/notifications.rs stay
 /// self-documenting about what *should* happen here once/if this gets revisited.
 pub fn remove(_app: &tauri::AppHandle, _id: &str) {}
-
-/// See [`remove`] — same no-op reasoning, for the "Clear All" path.
-pub fn remove_all(_app: &tauri::AppHandle) {}

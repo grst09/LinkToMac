@@ -104,6 +104,7 @@ class MacConnection(
     var onContactCreateRequested: ((ContactCreatePayload) -> Unit)? = null
     var onContactDeleteRequested: ((id: String) -> Unit)? = null
     var onMessagesRefreshRequested: (() -> Unit)? = null
+    var onNotificationsRefreshRequested: (() -> Unit)? = null
     var onNotesRefreshRequested: (() -> Unit)? = null
     var onNoteCreateRequested: ((NoteCreatePayload) -> Unit)? = null
     var onNoteUpdateRequested: ((NoteUpdatePayload) -> Unit)? = null
@@ -321,6 +322,7 @@ class MacConnection(
                     val payload = json.decodeFromJsonElement<ContactDeletePayload>(envelope.payload)
                     onContactDeleteRequested?.invoke(payload.id)
                 }
+                "notifications.refresh" -> onNotificationsRefreshRequested?.invoke()
                 "notes.refresh" -> onNotesRefreshRequested?.invoke()
                 "notes.create" -> {
                     val payload = json.decodeFromJsonElement<NoteCreatePayload>(envelope.payload)
@@ -418,6 +420,10 @@ class MacConnection(
 
     fun sendNotificationRemoved(id: String) {
         send("notification.removed", json.encodeToJsonElement(NotificationRemovedPayload(id)))
+    }
+
+    fun sendNotificationsSync(notifications: List<NotificationPostedPayload>) {
+        send("notifications.sync", json.encodeToJsonElement(NotificationsSyncPayload(notifications)))
     }
 
     fun sendCallLogSync(calls: List<CallLogEntry>) {

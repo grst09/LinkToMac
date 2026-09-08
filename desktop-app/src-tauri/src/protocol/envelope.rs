@@ -74,7 +74,16 @@ pub struct PairingQrPayload {
 
 // MARK: - Notification payloads
 
+// Missing `rename_all = "camelCase"` here (unlike every other payload struct in this file,
+// including its own parent `NotificationPostedPayload` right below) meant this expected a literal
+// `action_id` key, but Android's kotlinx.serialization sends `actionId` (the Kotlin property name
+// as-is, no `@SerialName` override) — so any notification actually carrying action buttons failed
+// deserialization outright with "missing field `action_id`", live `notification.posted` included.
+// It just never surfaced: most notifications have no actions, and the ones that do failed
+// silently (a dropped message, not a crash) until a bulk `notifications.sync` made it far more
+// likely at least one included notification had one.
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct NotificationAction {
     pub title: String,
     pub action_id: String,
@@ -96,11 +105,24 @@ pub struct NotificationPostedPayload {
     pub actions: Vec<NotificationAction>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub icon_base64: Option<String>,
+    // Android's FLAG_ONGOING_EVENT / FLAG_NO_CLEAR — the OS refuses to let a NotificationListenerService
+    // cancel these (car-key/foreground-service style notifications), so dismissing is not offered for them.
+    #[serde(default)]
+    pub ongoing: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationRemovedPayload {
     pub id: String,
+}
+
+/// Full-snapshot replace of every notification currently showing on the phone — requested
+/// on-demand via `refresh_notifications` (see commands/notifications.rs) to recover from any
+/// `notification.posted`/`notification.removed` missed while disconnected, the same way
+/// `NotesSyncPayload` recovers a note list.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NotificationsSyncPayload {
+    pub notifications: Vec<NotificationPostedPayload>,
 }
 
 // MARK: - Call log + SMS payloads (Phase 2)

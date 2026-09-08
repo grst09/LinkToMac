@@ -1,7 +1,7 @@
 use tauri::Emitter;
 
 use crate::net::server::AppState;
-use crate::protocol::envelope::{NotificationPostedPayload, NotificationRemovedPayload};
+use crate::protocol::envelope::{NotificationPostedPayload, NotificationRemovedPayload, NotificationsSyncPayload};
 
 const MAX_NOTIFICATIONS: usize = 200;
 
@@ -37,4 +37,18 @@ pub async fn removed(payload: NotificationRemovedPayload, state: &std::sync::Arc
     tracing::info!("notification.removed: {}", payload.id);
     let _ = state.app_handle.emit("notification-removed", payload.clone());
     crate::notify::remove(&state.app_handle, &payload.id);
+}
+
+/// Full-snapshot replace — response to `refresh_notifications` (see commands/notifications.rs).
+/// Unlike `posted`/`removed`, which only ever move the in-memory list forward one event at a
+/// time, this reconciles it against whatever's *actually* showing on the phone right now — the
+/// fix for a notification that was posted or dismissed while the connection was down and so
+/// never reached either of those handlers. No native banners fire here (unlike `posted`): this is
+/// catching up on state, not announcing something new.
+pub async fn sync(payload: NotificationsSyncPayload, state: &std::sync::Arc<AppState>) {
+    let mut notifications = payload.notifications;
+    notifications.truncate(MAX_NOTIFICATIONS);
+    tracing::info!("notifications.sync: {} notifications", notifications.len());
+    *state.notifications.lock().await = notifications.clone();
+    let _ = state.app_handle.emit("notifications-synced", notifications);
 }

@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { AnimatePresence } from "framer-motion";
-import { Trash2, X } from "lucide-react";
+import { RefreshCw, Trash2, X } from "lucide-react";
 import { SectionHeader } from "./SectionHeader";
 import { AnimatedListRow } from "./AnimatedListRow";
 import { sectionMeta } from "../theme/sections";
@@ -10,12 +10,13 @@ import {
   dismissAllNotifications,
   dismissNotification,
   initNotificationListeners,
+  refreshNotifications,
   useNotificationsStore,
   type AppNotification,
 } from "../store/notifications";
 
 export function NotificationsView() {
-  const { notifications, loaded } = useNotificationsStore();
+  const { notifications, loaded, errorMessage } = useNotificationsStore();
 
   useEffect(() => {
     initNotificationListeners();
@@ -27,17 +28,31 @@ export function NotificationsView() {
         section={sectionMeta("notifications")}
         subtitle={`${notifications.length} notification${notifications.length === 1 ? "" : "s"}`}
         trailing={
-          notifications.length > 0 && (
+          <div className="flex items-center gap-1.5">
             <button
-              onClick={() => dismissAllNotifications()}
-              className="flex items-center gap-1 rounded-md border border-black/10 dark:border-white/15 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+              onClick={() => refreshNotifications()}
+              title="Sync"
+              className="rounded-md p-1.5 text-neutral-500 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
             >
-              <Trash2 className="h-3.5 w-3.5" />
-              Clear All
+              <RefreshCw className="h-3.5 w-3.5" />
             </button>
-          )
+            {notifications.some((n) => !n.ongoing) && (
+              <button
+                onClick={() => dismissAllNotifications()}
+                className="flex items-center gap-1 rounded-md border border-black/10 dark:border-white/15 px-2.5 py-1 text-xs font-medium text-neutral-600 dark:text-neutral-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+                Clear All
+              </button>
+            )}
+          </div>
         }
       />
+      {errorMessage && (
+        <div className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-orange-500/10 px-3 py-2 text-xs text-orange-700 dark:text-orange-400">
+          {errorMessage}
+        </div>
+      )}
       <div className="flex-1 overflow-y-auto p-4">
         {!loaded ? null : notifications.length === 0 ? (
           <div className="flex h-full items-center justify-center text-sm text-neutral-400 dark:text-neutral-500">
@@ -73,12 +88,14 @@ function NotificationRow({ notification, index }: { notification: AppNotificatio
           <span className="text-xs text-neutral-400 dark:text-neutral-500">
             {relativeTime(notification.postedAt)}
           </span>
-          <button
-            onClick={() => dismissNotification(notification.id)}
-            className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors"
-          >
-            <X className="h-3.5 w-3.5" />
-          </button>
+          {!notification.ongoing && (
+            <button
+              onClick={() => dismissNotification(notification.id)}
+              className="text-neutral-400 hover:text-neutral-600 dark:hover:text-neutral-200 transition-colors"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
         </div>
         <p className="truncate text-[13px] font-semibold text-neutral-900 dark:text-neutral-100">
           {notification.title}

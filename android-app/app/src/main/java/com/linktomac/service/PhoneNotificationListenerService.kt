@@ -27,13 +27,35 @@ class PhoneNotificationListenerService : NotificationListenerService() {
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
-        if (sbn.packageName == packageName) return // don't mirror our own notifications
+        val payload = payloadFor(sbn) ?: return
+        SyncForegroundService.notifyPosted(applicationContext, payload)
+    }
+
+    override fun onNotificationRemoved(sbn: StatusBarNotification) {
+        SyncForegroundService.notifyRemoved(applicationContext, sbn.key)
+    }
+
+    fun cancel(key: String) {
+        cancelNotification(key)
+    }
+
+    /** Every notification actually showing right now, converted the same way a live
+     *  [onNotificationPosted] would — for a fresh sync request from the Mac (see
+     *  `SyncForegroundService.onNotificationsRefreshRequested`), which needs to reconcile against
+     *  whatever's true *right now* rather than replay the event stream, since the whole point is
+     *  recovering from an event that stream already missed. */
+    fun currentSnapshot(): List<NotificationPostedPayload> {
+        return activeNotifications?.mapNotNull { payloadFor(it) } ?: emptyList()
+    }
+
+    private fun payloadFor(sbn: StatusBarNotification): NotificationPostedPayload? {
+        if (sbn.packageName == packageName) return null // don't mirror our own notifications
         val extras = sbn.notification.extras
         val title = extras.getCharSequence(Notification.EXTRA_TITLE)?.toString().orEmpty()
         val text = extras.getCharSequence(Notification.EXTRA_TEXT)?.toString().orEmpty()
-        if (title.isEmpty() && text.isEmpty()) return
+        if (title.isEmpty() && text.isEmpty()) return null
 
-        val payload = NotificationPostedPayload(
+        return NotificationPostedPayload(
             id = sbn.key,
             packageName = sbn.packageName,
             appName = appName(sbn.packageName),
@@ -45,17 +67,9 @@ class PhoneNotificationListenerService : NotificationListenerService() {
             actions = sbn.notification.actions?.mapNotNull { action ->
                 action.title?.toString()?.let { NotificationAction(title = it, actionId = it) }
             } ?: emptyList(),
-            iconBase64 = appIconBase64(sbn.packageName)
+            iconBase64 = appIconBase64(sbn.packageName),
+            ongoing = sbn.notification.flags and (Notification.FLAG_ONGOING_EVENT or Notification.FLAG_NO_CLEAR) != 0
         )
-        SyncForegroundService.notifyPosted(applicationContext, payload)
-    }
-
-    override fun onNotificationRemoved(sbn: StatusBarNotification) {
-        SyncForegroundService.notifyRemoved(applicationContext, sbn.key)
-    }
-
-    fun cancel(key: String) {
-        cancelNotification(key)
     }
 
     private fun appName(packageName: String): String {
