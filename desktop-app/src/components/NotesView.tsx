@@ -904,7 +904,7 @@ function NoteEditPanel({
   if (!editor) return null;
 
   return (
-    <div className="flex h-full flex-col">
+    <div className="relative flex h-full flex-col">
       <div className="border-b border-black/5 dark:border-white/10">
         <p className="px-6 pb-1 pt-3 text-xs text-neutral-400 dark:text-neutral-500">
           {updatedAt != null ? `Last edited ${relativeTime(updatedAt)}` : ""}
@@ -970,26 +970,26 @@ function NoteEditPanel({
           />
 
           <EditorContent editor={editor} />
-
-          {findOpen && (
-            <FindReplaceBar
-              inputRef={findInputRef}
-              findQuery={findQuery}
-              onFindQueryChange={setFindQuery}
-              replaceQuery={replaceQuery}
-              onReplaceQueryChange={setReplaceQuery}
-              matchCount={matches.length}
-              matchIndex={matchIndex}
-              canEdit={canEdit}
-              onNext={goNext}
-              onPrev={goPrev}
-              onReplace={replaceCurrent}
-              onReplaceAll={replaceAll}
-              onClose={closeFind}
-            />
-          )}
         </motion.div>
       </div>
+
+      {findOpen && (
+        <FindReplaceBar
+          inputRef={findInputRef}
+          findQuery={findQuery}
+          onFindQueryChange={setFindQuery}
+          replaceQuery={replaceQuery}
+          onReplaceQueryChange={setReplaceQuery}
+          matchCount={matches.length}
+          matchIndex={matchIndex}
+          canEdit={canEdit}
+          onNext={goNext}
+          onPrev={goPrev}
+          onReplace={replaceCurrent}
+          onReplaceAll={replaceAll}
+          onClose={closeFind}
+        />
+      )}
     </div>
   );
 }
@@ -1135,7 +1135,7 @@ function FindReplaceBar({
   onClose: () => void;
 }) {
   return (
-    <div className="absolute inset-x-0 bottom-0 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-black/10 dark:border-white/10 bg-white/95 dark:bg-neutral-800/95 backdrop-blur px-3 py-2 shadow-modal">
+    <div className="absolute inset-x-4 bottom-4 z-20 flex flex-wrap items-center gap-2 rounded-xl border border-black/10 dark:border-white/10 bg-white/95 dark:bg-neutral-800/95 backdrop-blur px-3 py-2 shadow-modal">
       <SearchIcon className="h-3.5 w-3.5 shrink-0 text-neutral-400" />
       <input
         ref={inputRef}
