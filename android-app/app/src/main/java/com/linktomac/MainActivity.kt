@@ -27,8 +27,6 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -39,6 +37,9 @@ import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -60,6 +61,9 @@ import com.linktomac.ui.NotesScreen
 import com.linktomac.ui.PairingScreen
 import com.linktomac.ui.SettingsScreen
 import com.linktomac.ui.qrScanOptions
+import com.linktomac.ui.theme.AccentViolet
+import com.linktomac.ui.theme.AccentYellow
+import com.linktomac.ui.theme.AccentYellowOn
 import com.linktomac.ui.theme.LinkToMacTheme
 import com.linktomac.ui.theme.ThemeMode
 import com.linktomac.ui.theme.resolveDarkTheme
@@ -179,34 +183,78 @@ class MainActivity : ComponentActivity() {
                 // unlike the old Scaffold's innerPadding) — with enableEdgeToEdge() drawing behind
                 // the system bars, both the rail/bar and the main content need this explicit inset
                 // themselves or they render straight under the status bar.
+                // Each tab gets its own accent (green/yellow/violet) on both the icon and its
+                // indicator pill, rather than every destination sharing one color — makes the
+                // current section identifiable by color alone, and ties Notes' accent to its own
+                // FAB, which uses the same yellow. Built outside `navigationSuiteItems` below:
+                // that scope's `item()` calls aren't fully @Composable-scoped, so reading
+                // MaterialTheme.colorScheme directly inside one of them fails to compile.
+                val deviceItemColors = NavigationSuiteDefaults.itemColors(
+                    navigationBarItemColors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    navigationRailItemColors = NavigationRailItemDefaults.colors(
+                        selectedIconColor = MaterialTheme.colorScheme.primary,
+                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                )
+                val notesItemColors = NavigationSuiteDefaults.itemColors(
+                    navigationBarItemColors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = AccentYellowOn,
+                        indicatorColor = AccentYellow.copy(alpha = 0.3f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    navigationRailItemColors = NavigationRailItemDefaults.colors(
+                        selectedIconColor = AccentYellowOn,
+                        indicatorColor = AccentYellow.copy(alpha = 0.3f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                )
+                val settingsItemColors = NavigationSuiteDefaults.itemColors(
+                    navigationBarItemColors = NavigationBarItemDefaults.colors(
+                        selectedIconColor = AccentViolet,
+                        indicatorColor = AccentViolet.copy(alpha = 0.25f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    ),
+                    navigationRailItemColors = NavigationRailItemDefaults.colors(
+                        selectedIconColor = AccentViolet,
+                        indicatorColor = AccentViolet.copy(alpha = 0.25f),
+                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                )
                 NavigationSuiteScaffold(
                     modifier = Modifier.safeDrawingPadding(),
                     navigationSuiteItems = {
                         item(
                             selected = selectedTab == 0,
                             onClick = { selectedTab = 0 },
-                            icon = { Icon(Icons.Filled.Smartphone, contentDescription = "Device") }
+                            icon = { Icon(Icons.Filled.Smartphone, contentDescription = "Device") },
+                            colors = deviceItemColors
                         )
                         item(
                             selected = selectedTab == 1,
                             onClick = { selectedTab = 1 },
-                            icon = { Icon(Icons.Filled.StickyNote2, contentDescription = "Notes") }
+                            icon = { Icon(Icons.Filled.StickyNote2, contentDescription = "Notes") },
+                            colors = notesItemColors
                         )
                         item(
                             selected = selectedTab == 2,
                             onClick = { selectedTab = 2 },
-                            icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
+                            icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
+                            colors = settingsItemColors
                         )
                     }
                 ) {
                     AnimatedContent(
                         targetState = selectedTab,
                         modifier = Modifier.fillMaxSize(),
-                        transitionSpec = {
-                            val direction = if (targetState > initialState) 1 else -1
-                            (fadeIn(tween(220)) + slideInHorizontally(tween(220)) { direction * it / 6 })
-                                .togetherWith(fadeOut(tween(140)) + slideOutHorizontally(tween(140)) { -direction * it / 6 })
-                        },
+                        // A plain crossfade — no horizontal slide. The slide read as a leftover
+                        // "page turn" affordance that didn't fit tabs living in a side rail on a
+                        // wide window (nothing is spatially "left" or "right" of a vertical rail).
+                        transitionSpec = { fadeIn(tween(220)).togetherWith(fadeOut(tween(140))) },
                         label = "tabContent"
                     ) { tab ->
                         when (tab) {
@@ -238,7 +286,9 @@ class MainActivity : ComponentActivity() {
                             1 -> NotesScreen(
                                 noteStore = noteStore,
                                 onChanged = { SyncForegroundService.notifyNotesChangedLocally(applicationContext) },
-                                onSyncRequested = { SyncForegroundService.notifyNotesChangedLocally(applicationContext) }
+                                onSyncRequested = { SyncForegroundService.notifyNotesChangedLocally(applicationContext) },
+                                initialListPaneWidthDp = appSettingsStore.notesListPaneWidthDp,
+                                onListPaneWidthChanged = { appSettingsStore.notesListPaneWidthDp = it }
                             )
                             else -> SettingsScreen(
                                 isBatteryOptimizationIgnored = { isBatteryOptimizationIgnored() },

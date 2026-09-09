@@ -96,6 +96,8 @@ import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.linktomac.net.NoteEntry
+import com.linktomac.ui.theme.AccentYellow
+import com.linktomac.ui.theme.AccentYellowOn
 import com.linktomac.storage.NoteStore
 import com.linktomac.ui.components.AppHeader
 import com.linktomac.ui.components.LinkCard
@@ -114,7 +116,13 @@ import java.util.Date
  * a different app bolted onto the rest of LinkToMac.
  */
 @Composable
-fun NotesScreen(noteStore: NoteStore, onChanged: () -> Unit, onSyncRequested: () -> Unit) {
+fun NotesScreen(
+    noteStore: NoteStore,
+    onChanged: () -> Unit,
+    onSyncRequested: () -> Unit,
+    initialListPaneWidthDp: Float,
+    onListPaneWidthChanged: (Float) -> Unit,
+) {
     var notes by remember { mutableStateOf(noteStore.readAll()) }
     var editing by remember { mutableStateOf<NoteEntry?>(null) }
     var creating by remember { mutableStateOf(false) }
@@ -205,10 +213,10 @@ fun NotesScreen(noteStore: NoteStore, onChanged: () -> Unit, onSyncRequested: ()
         val screenWidthDp = LocalConfiguration.current.screenWidthDp
         val minListPaneWidthDp = 240f
         val maxListPaneWidthDp = (screenWidthDp - 320f).coerceAtLeast(minListPaneWidthDp)
-        // 300dp, not the 360dp a 2-column grid needed — a single-column list of note cards reads
-        // fine narrower, and the difference goes straight to the detail pane by default instead
-        // of sitting unused in the list.
-        var listPaneWidthDp by remember { mutableFloatStateOf(300f) }
+        // Seeded from the persisted value (300dp default — see AppSettingsStore) rather than
+        // always starting fresh, so a drag actually sticks as "how I like it" instead of
+        // resetting the next time the note editor opens.
+        var listPaneWidthDp by remember { mutableFloatStateOf(initialListPaneWidthDp) }
         val clampedListPaneWidthDp = listPaneWidthDp.coerceIn(minListPaneWidthDp, maxListPaneWidthDp)
 
         Row(modifier = Modifier.fillMaxSize()) {
@@ -216,7 +224,10 @@ fun NotesScreen(noteStore: NoteStore, onChanged: () -> Unit, onSyncRequested: ()
                 grid(true) { note -> editing = note; creating = false }
             }
             ResizableDivider(
-                onDragDp = { deltaDp -> listPaneWidthDp = (listPaneWidthDp + deltaDp).coerceIn(minListPaneWidthDp, maxListPaneWidthDp) }
+                onDragDp = { deltaDp ->
+                    listPaneWidthDp = (listPaneWidthDp + deltaDp).coerceIn(minListPaneWidthDp, maxListPaneWidthDp)
+                    onListPaneWidthChanged(listPaneWidthDp)
+                }
             )
             Box(modifier = Modifier.weight(1f)) {
                 if (showingEditor) {
@@ -395,6 +406,8 @@ private fun NotesGrid(
 
         FloatingActionButton(
             onClick = onCreateClick,
+            containerColor = AccentYellow,
+            contentColor = AccentYellowOn,
             modifier = Modifier.align(Alignment.BottomEnd).padding(20.dp)
         ) {
             Icon(Icons.Filled.Add, contentDescription = "New note")

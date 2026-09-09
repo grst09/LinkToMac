@@ -60,6 +60,13 @@ class AppSettingsStore(context: Context) {
         get() = prefs.getString(KEY_THEME_MODE, "SYSTEM") ?: "SYSTEM"
         set(value) = prefs.edit().putString(KEY_THEME_MODE, value).apply()
 
+    /** The list pane's width in Notes' list-detail layout (large/foldable screens only — see
+     *  NotesScreen.kt), remembered across app restarts once the user drags it, rather than
+     *  resetting to the built-in default every time the note editor is reopened. */
+    var notesListPaneWidthDp: Float
+        get() = prefs.getFloat(KEY_NOTES_LIST_PANE_WIDTH_DP, 300f)
+        set(value) = prefs.edit().putFloat(KEY_NOTES_LIST_PANE_WIDTH_DP, value).apply()
+
     fun isSyncEnabled(category: SyncCategory): Boolean = when (category) {
         SyncCategory.NOTIFICATIONS -> notificationsSyncEnabled
         SyncCategory.CALLS_AND_MESSAGES -> callsAndMessagesSyncEnabled
@@ -88,5 +95,6 @@ class AppSettingsStore(context: Context) {
         const val KEY_PHOTOS_SYNC_ENABLED = "photos_sync_enabled"
         const val KEY_NOTES_SYNC_ENABLED = "notes_sync_enabled"
         const val KEY_THEME_MODE = "theme_mode"
+        const val KEY_NOTES_LIST_PANE_WIDTH_DP = "notes_list_pane_width_dp"
     }
 }
