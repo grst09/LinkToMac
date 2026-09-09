@@ -1,5 +1,5 @@
 import { motion } from "framer-motion";
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { PiSidebarSimpleFill } from "react-icons/pi";
 import { SECTIONS, SETTINGS_SECTION, type SectionId, type SectionMeta } from "../theme/sections";
 import { DeviceCard } from "./DeviceCard";
 import { useSidebarStore, toggleSidebarCollapsed } from "../store/sidebar";
@@ -51,11 +51,10 @@ export function Sidebar({ selection, onSelect }: SidebarProps) {
             collapsed ? "justify-center" : ""
           }`}
         >
-          {collapsed ? (
-            <PanelLeftOpen className="h-4 w-4 shrink-0" strokeWidth={2} />
-          ) : (
-            <PanelLeftClose className="h-4 w-4 shrink-0" strokeWidth={2} />
-          )}
+          {/* One solid icon, mirrored for "expand" — Phosphor doesn't have separate
+              open/close-sidebar glyphs the way lucide's PanelLeftOpen/PanelLeftClose did, but a
+              horizontal flip reproduces the same directional cue. */}
+          <PiSidebarSimpleFill className={`h-4 w-4 shrink-0 ${collapsed ? "scale-x-[-1]" : ""}`} />
           {!collapsed && <span className="truncate">Collapse</span>}
         </button>
       </div>
@@ -95,7 +94,7 @@ function NavItem({
             transition={{ type: "spring", stiffness: 500, damping: 40 }}
           />
         )}
-        <Icon className={`relative h-4 w-4 shrink-0 ${active ? section.accent.text : ""}`} strokeWidth={2} />
+        <Icon className={`relative h-4 w-4 shrink-0 ${active ? section.accent.text : ""}`} />
         {!collapsed && <span className="relative truncate">{section.label}</span>}
       </button>
     </li>

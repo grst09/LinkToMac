@@ -1,16 +1,20 @@
+// Solid (Phosphor "Fill" weight) icons rather than lucide's stroke-only outlines — the sidebar
+// used to read as a column of hollow line-art glyphs; these are actual filled silhouettes, the
+// same shift a reference screenshot of a solid-icon sidebar (Superhuman-style) called for. Scoped
+// to just the sidebar's own icon set — everywhere else in the app keeps its existing lucide icons.
 import {
-  Bell,
-  MessageCircle,
-  Image,
-  Folder,
-  Users,
-  MonitorSmartphone,
-  Smartphone,
-  StickyNote,
-  Clipboard,
-  Settings as SettingsIcon,
-  type LucideIcon,
-} from "lucide-react";
+  PiBellFill,
+  PiChatCircleFill,
+  PiImageFill,
+  PiFolderFill,
+  PiUsersFill,
+  PiScreencastFill,
+  PiDeviceMobileFill,
+  PiNoteFill,
+  PiClipboardTextFill,
+  PiGearSixFill,
+} from "react-icons/pi";
+import type { IconType } from "react-icons";
 
 export type SectionId =
   | "notifications"
@@ -27,7 +31,7 @@ export type SectionId =
 export interface SectionMeta {
   id: SectionId;
   label: string;
-  icon: LucideIcon;
+  icon: IconType;
   /** Matches the accent colors already established in the old SwiftUI app's SectionHeaderView
    *  usages (orange notifications, blue messages/files, purple photos/contacts) — carried
    *  forward rather than reinvented. Screen Mirroring / This Device / Settings didn't have an
@@ -90,21 +94,21 @@ export const ACCENTS = {
 } as const;
 
 export const SECTIONS: SectionMeta[] = [
-  { id: "notifications", label: "Notifications", icon: Bell, accent: ACCENTS.orange },
-  { id: "messages", label: "Messages", icon: MessageCircle, accent: ACCENTS.blue },
-  { id: "photos", label: "Photos", icon: Image, accent: ACCENTS.purple },
-  { id: "files", label: "Files", icon: Folder, accent: ACCENTS.blue },
-  { id: "contacts", label: "Contacts", icon: Users, accent: ACCENTS.purple },
-  { id: "notes", label: "Notes", icon: StickyNote, accent: ACCENTS.amber },
-  { id: "clipboard", label: "Clipboard", icon: Clipboard, accent: ACCENTS.cyan },
-  { id: "mirroring", label: "Screen Mirroring", icon: MonitorSmartphone, accent: ACCENTS.teal },
-  { id: "device", label: "This Device", icon: Smartphone, accent: ACCENTS.emerald },
+  { id: "notifications", label: "Notifications", icon: PiBellFill, accent: ACCENTS.orange },
+  { id: "messages", label: "Messages", icon: PiChatCircleFill, accent: ACCENTS.blue },
+  { id: "photos", label: "Photos", icon: PiImageFill, accent: ACCENTS.purple },
+  { id: "files", label: "Files", icon: PiFolderFill, accent: ACCENTS.blue },
+  { id: "contacts", label: "Contacts", icon: PiUsersFill, accent: ACCENTS.purple },
+  { id: "notes", label: "Notes", icon: PiNoteFill, accent: ACCENTS.amber },
+  { id: "clipboard", label: "Clipboard", icon: PiClipboardTextFill, accent: ACCENTS.cyan },
+  { id: "mirroring", label: "Screen Mirroring", icon: PiScreencastFill, accent: ACCENTS.teal },
+  { id: "device", label: "This Device", icon: PiDeviceMobileFill, accent: ACCENTS.emerald },
 ];
 
 export const SETTINGS_SECTION: SectionMeta = {
   id: "settings",
   label: "Settings",
-  icon: SettingsIcon,
+  icon: PiGearSixFill,
   accent: ACCENTS.slate,
 };
 
