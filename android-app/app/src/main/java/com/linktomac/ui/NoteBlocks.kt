@@ -501,7 +501,15 @@ data class EditingBlock(
     val blockId: String,
     val kind: EditKind,
     val value: TextFieldValue,
-    val taskChecked: List<Boolean> = emptyList()
+    val taskChecked: List<Boolean> = emptyList(),
+    // Marks toggled with the selection collapsed (just a cursor, nothing highlighted) — there's
+    // no existing range to flip a mark across yet, so the toggle instead "arms" it for whatever
+    // gets typed next at the cursor (see `applyMarkToggle`/`EditingBlockField`) rather than
+    // silently doing nothing, the same way clicking Bold before typing works in Word/Docs/Notion
+    // rather than requiring text to already exist and be selected first. Stays armed across
+    // keystrokes until toggled off — `EditingBlockField` is what actually stamps it onto newly
+    // typed text and never needs a remembered position for that (see its doc comment for why).
+    val pendingMarks: Set<EditMark> = emptySet()
 )
 
 /** Seeds an [EditingBlock] from whatever's currently in the block — preserving bold/italic/
@@ -691,9 +699,9 @@ enum class EditMark { BOLD, ITALIC, STRIKE }
 
 /** Toggles one formatting mark across `[range]` of `text` the way a rich-text editor's toolbar
  *  button normally does: "apply to all" if any character in the range doesn't already have it,
- *  "remove from all" if every character already does. A no-op for a collapsed (empty) selection —
- *  there's nothing to apply the mark *to* yet, matching the desktop toolbar's own requirement to
- *  select text first.
+ *  "remove from all" if every character already does. Only meaningful for a real (non-collapsed)
+ *  selection — see [applyMarkToggle] for the collapsed-cursor case, which this no longer needs to
+ *  handle since callers branch before reaching here; the guard below is just defensive.
  *
  *  [AnnotatedString]'s spans are additive/mergeable but not subtractive — a later span with a
  *  `null` field doesn't clear an earlier span's non-null value over the same range, it's simply
@@ -719,6 +727,45 @@ fun toggleMarkInRange(text: AnnotatedString, range: TextRange, mark: EditMark): 
         }
     }
     return rebuildAnnotatedString(text.text, ::updated)
+}
+
+/** Whether [mark] should show "on" in the toolbar right now. For a real selection, whether every
+ *  character in it already has the mark (matching [toggleMarkInRange]'s own "all vs. any" rule).
+ *  For a collapsed selection (just a cursor), whether it's armed in [EditingBlock.pendingMarks] —
+ *  there's no character at the cursor itself to read a style off of, so [pendingMarks] is the
+ *  only source of truth for what typing right now would produce. */
+fun isMarkActive(editing: EditingBlock, mark: EditMark): Boolean {
+    val range = editing.value.selection
+    if (range.collapsed) return mark in editing.pendingMarks
+    val text = editing.value.annotatedString
+    return (range.min until range.max).all { i ->
+        val (bold, italic, strike) = charStyleAt(text, i)
+        when (mark) {
+            EditMark.BOLD -> bold
+            EditMark.ITALIC -> italic
+            EditMark.STRIKE -> strike
+        }
+    }
+}
+
+/** Toggles [mark] the way the formatting toolbar button does: across the current selection when
+ *  there is one (delegates straight to [toggleMarkInRange], unchanged), or — for a collapsed
+ *  selection — arms/disarms it in [EditingBlock.pendingMarks] instead of the previous silent
+ *  no-op. [EditingBlockField] reads `pendingMarks` back out on text actually typed next and
+ *  stamps it onto just the newly-inserted characters (see its `onValueChange`), and leaves the
+ *  mark armed afterwards (sticky) so a whole run of typing picks it up, not just one character —
+ *  matching a tap of the same button again being what turns it back off. */
+fun applyMarkToggle(editing: EditingBlock, mark: EditMark): EditingBlock {
+    val range = editing.value.selection
+    if (!range.collapsed) {
+        return editing.copy(
+            value = editing.value.copy(
+                annotatedString = toggleMarkInRange(editing.value.annotatedString, range, mark)
+            )
+        )
+    }
+    val pending = if (mark in editing.pendingMarks) editing.pendingMarks - mark else editing.pendingMarks + mark
+    return editing.copy(pendingMarks = pending)
 }
 
 /** Switches [editing] to [target], or back to plain [EditKind.PARAGRAPH] if it's already

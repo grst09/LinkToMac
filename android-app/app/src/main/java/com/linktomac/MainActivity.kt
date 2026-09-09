@@ -28,19 +28,26 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.StickyNote2
 import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.Smartphone
+import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationBarItemDefaults
+import androidx.compose.material3.NavigationRail
+import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
+import androidx.compose.material3.Surface
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
 import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -48,6 +55,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.core.view.WindowCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.linktomac.service.InputInjectionAccessibilityService
@@ -189,65 +197,49 @@ class MainActivity : ComponentActivity() {
                 // FAB, which uses the same yellow. Built outside `navigationSuiteItems` below:
                 // that scope's `item()` calls aren't fully @Composable-scoped, so reading
                 // MaterialTheme.colorScheme directly inside one of them fails to compile.
+                val deviceBarColors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val deviceRailColors = NavigationRailItemDefaults.colors(
+                    selectedIconColor = MaterialTheme.colorScheme.primary,
+                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
                 val deviceItemColors = NavigationSuiteDefaults.itemColors(
-                    navigationBarItemColors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    navigationRailItemColors = NavigationRailItemDefaults.colors(
-                        selectedIconColor = MaterialTheme.colorScheme.primary,
-                        indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    navigationBarItemColors = deviceBarColors,
+                    navigationRailItemColors = deviceRailColors
+                )
+                val notesBarColors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = AccentYellowOn,
+                    indicatorColor = AccentYellow.copy(alpha = 0.3f),
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val notesRailColors = NavigationRailItemDefaults.colors(
+                    selectedIconColor = AccentYellowOn,
+                    indicatorColor = AccentYellow.copy(alpha = 0.3f),
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 val notesItemColors = NavigationSuiteDefaults.itemColors(
-                    navigationBarItemColors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = AccentYellowOn,
-                        indicatorColor = AccentYellow.copy(alpha = 0.3f),
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    navigationRailItemColors = NavigationRailItemDefaults.colors(
-                        selectedIconColor = AccentYellowOn,
-                        indicatorColor = AccentYellow.copy(alpha = 0.3f),
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    navigationBarItemColors = notesBarColors,
+                    navigationRailItemColors = notesRailColors
+                )
+                val settingsBarColors = NavigationBarItemDefaults.colors(
+                    selectedIconColor = AccentViolet,
+                    indicatorColor = AccentViolet.copy(alpha = 0.25f),
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                val settingsRailColors = NavigationRailItemDefaults.colors(
+                    selectedIconColor = AccentViolet,
+                    indicatorColor = AccentViolet.copy(alpha = 0.25f),
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 val settingsItemColors = NavigationSuiteDefaults.itemColors(
-                    navigationBarItemColors = NavigationBarItemDefaults.colors(
-                        selectedIconColor = AccentViolet,
-                        indicatorColor = AccentViolet.copy(alpha = 0.25f),
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    ),
-                    navigationRailItemColors = NavigationRailItemDefaults.colors(
-                        selectedIconColor = AccentViolet,
-                        indicatorColor = AccentViolet.copy(alpha = 0.25f),
-                        unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    navigationBarItemColors = settingsBarColors,
+                    navigationRailItemColors = settingsRailColors
                 )
-                NavigationSuiteScaffold(
-                    modifier = Modifier.safeDrawingPadding(),
-                    navigationSuiteItems = {
-                        item(
-                            selected = selectedTab == 0,
-                            onClick = { selectedTab = 0 },
-                            icon = { Icon(Icons.Filled.Smartphone, contentDescription = "Device") },
-                            colors = deviceItemColors
-                        )
-                        item(
-                            selected = selectedTab == 1,
-                            onClick = { selectedTab = 1 },
-                            icon = { Icon(Icons.Filled.StickyNote2, contentDescription = "Notes") },
-                            colors = notesItemColors
-                        )
-                        item(
-                            selected = selectedTab == 2,
-                            onClick = { selectedTab = 2 },
-                            icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
-                            colors = settingsItemColors
-                        )
-                    }
-                ) {
+                val tabContent: @Composable () -> Unit = {
                     AnimatedContent(
                         targetState = selectedTab,
                         modifier = Modifier.fillMaxSize(),
@@ -302,6 +294,77 @@ class MainActivity : ComponentActivity() {
                                 deviceId = localDeviceId()
                             )
                         }
+                    }
+                }
+                // NavigationSuiteScaffold's own NavigationRail always packs items against the top
+                // (Material's spec default, and not something the 1.3.1 API we're on exposes a
+                // param to change) — on a rail this is a much longer reach than a phone's bottom
+                // bar ever was, so on a wide window we render the rail ourselves with a weighted
+                // Spacer above and below the items to center them instead, and fall back to
+                // NavigationSuiteScaffold's own bottom NavigationBar unchanged on a compact window
+                // (a horizontal bar has no "center" to reach for in the first place).
+                val useRail = LocalConfiguration.current.screenWidthDp >= 600
+                // Both branches used to take `Modifier.safeDrawingPadding()` on their outermost
+                // element — which, since that element is also the one painting the background
+                // (NavigationSuiteScaffold wraps everything in a Surface; the rail branch's Row
+                // was the outermost element here), pushed the *painted background* itself in from
+                // under the status/nav bars along with the content, leaving the system bar area
+                // showing the plain window background instead of the app's own. A Surface here
+                // with no padding of its own paints edge-to-edge first; padding then moves to just
+                // the content each branch renders, so only content — not the color behind it —
+                // clears the system bars. The nav rail/bar chrome needs no padding of its own
+                // either way: both apply their own window-insets padding internally.
+                Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                    if (useRail) {
+                        Row(modifier = Modifier.fillMaxSize()) {
+                            NavigationRail {
+                                Spacer(Modifier.weight(1f))
+                                NavigationRailItem(
+                                    selected = selectedTab == 0,
+                                    onClick = { selectedTab = 0 },
+                                    icon = { Icon(Icons.Filled.PhoneAndroid, contentDescription = "Device") },
+                                    colors = deviceRailColors
+                                )
+                                NavigationRailItem(
+                                    selected = selectedTab == 1,
+                                    onClick = { selectedTab = 1 },
+                                    icon = { Icon(Icons.Filled.StickyNote2, contentDescription = "Notes") },
+                                    colors = notesRailColors
+                                )
+                                NavigationRailItem(
+                                    selected = selectedTab == 2,
+                                    onClick = { selectedTab = 2 },
+                                    icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
+                                    colors = settingsRailColors
+                                )
+                                Spacer(Modifier.weight(1f))
+                            }
+                            Box(modifier = Modifier.weight(1f).safeDrawingPadding()) { tabContent() }
+                        }
+                    } else {
+                        NavigationSuiteScaffold(
+                            navigationSuiteItems = {
+                                item(
+                                    selected = selectedTab == 0,
+                                    onClick = { selectedTab = 0 },
+                                    icon = { Icon(Icons.Filled.PhoneAndroid, contentDescription = "Device") },
+                                    colors = deviceItemColors
+                                )
+                                item(
+                                    selected = selectedTab == 1,
+                                    onClick = { selectedTab = 1 },
+                                    icon = { Icon(Icons.Filled.StickyNote2, contentDescription = "Notes") },
+                                    colors = notesItemColors
+                                )
+                                item(
+                                    selected = selectedTab == 2,
+                                    onClick = { selectedTab = 2 },
+                                    icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
+                                    colors = settingsItemColors
+                                )
+                            },
+                            content = { Box(modifier = Modifier.safeDrawingPadding()) { tabContent() } }
+                        )
                     }
                 }
             }

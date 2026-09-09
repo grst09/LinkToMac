@@ -48,6 +48,8 @@ import androidx.compose.material.icons.filled.FormatItalic
 import androidx.compose.material.icons.filled.FormatListBulleted
 import androidx.compose.material.icons.filled.FormatListNumbered
 import androidx.compose.material.icons.filled.FormatStrikethrough
+import androidx.compose.material.icons.filled.Fullscreen
+import androidx.compose.material.icons.filled.FullscreenExit
 import androidx.compose.material.icons.filled.CheckBox
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.Search
@@ -89,9 +91,15 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.OffsetMapping
 import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.input.TransformedText
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -134,7 +142,15 @@ fun NotesScreen(
     }
 
     val showingEditor = creating || editing != null
-    val editor: @Composable () -> Unit = {
+    // Only meaningful in the list-detail layout below — collapsed while editing, hiding the list
+    // pane so the editor (and its toolbar) gets the full pane width instead of whatever's left
+    // after dragging the divider. Resets once the editor closes so the list is never left hidden
+    // with nothing on screen able to bring it back.
+    var listPaneCollapsed by remember { mutableStateOf(false) }
+    LaunchedEffect(showingEditor) {
+        if (!showingEditor) listPaneCollapsed = false
+    }
+    val editor: @Composable (showCollapseToggle: Boolean) -> Unit = { showCollapseToggle ->
         NoteEditor(
             existing = editing,
             onCancel = {
@@ -168,6 +184,12 @@ fun NotesScreen(
                     refresh()
                     editing = notes.find { it.id == note.id }
                 }
+            },
+            isListPaneCollapsed = listPaneCollapsed,
+            onToggleListPaneCollapsed = if (showCollapseToggle) {
+                { listPaneCollapsed = !listPaneCollapsed }
+            } else {
+                null
             }
         )
     }
@@ -212,7 +234,16 @@ fun NotesScreen(
         // editing one — bounded so neither pane can be dragged out of usability.
         val screenWidthDp = LocalConfiguration.current.screenWidthDp
         val minListPaneWidthDp = 240f
-        val maxListPaneWidthDp = (screenWidthDp - 320f).coerceAtLeast(minListPaneWidthDp)
+        // The detail pane's own top bar is three pills — Back, the (horizontally scrollable)
+        // formatting toolbar, Pin/Delete — and below ~380dp the fixed-width Back and Pin/Delete
+        // pills alone eat the row, leaving the formatting pill's `weight(1f)` a sliver too thin to
+        // render at all rather than just cramped. 380dp keeps a real minimum width for it. The
+        // divider itself (see ResizableDivider) is also 16dp wide and sits between the two panes,
+        // so it has to come out of the same budget or dragging to the nominal limit would still
+        // squeeze the detail pane 16dp tighter than intended.
+        val minEditPaneWidthDp = 380f
+        val dividerWidthDp = 16f
+        val maxListPaneWidthDp = (screenWidthDp - minEditPaneWidthDp - dividerWidthDp).coerceAtLeast(minListPaneWidthDp)
         // Seeded from the persisted value (300dp default — see AppSettingsStore) rather than
         // always starting fresh, so a drag actually sticks as "how I like it" instead of
         // resetting the next time the note editor opens.
@@ -220,18 +251,28 @@ fun NotesScreen(
         val clampedListPaneWidthDp = listPaneWidthDp.coerceIn(minListPaneWidthDp, maxListPaneWidthDp)
 
         Row(modifier = Modifier.fillMaxSize()) {
-            Box(modifier = Modifier.width(clampedListPaneWidthDp.dp)) {
-                grid(true) { note -> editing = note; creating = false }
-            }
-            ResizableDivider(
-                onDragDp = { deltaDp ->
-                    listPaneWidthDp = (listPaneWidthDp + deltaDp).coerceIn(minListPaneWidthDp, maxListPaneWidthDp)
-                    onListPaneWidthChanged(listPaneWidthDp)
+            if (!listPaneCollapsed) {
+                // A shade darker than the detail pane (surfaceContainer vs. the page background) —
+                // a real panel boundary, not just the thin divider line between two otherwise
+                // identical-looking areas.
+                Box(
+                    modifier = Modifier
+                        .width(clampedListPaneWidthDp.dp)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.surfaceContainer)
+                ) {
+                    grid(true) { note -> editing = note; creating = false }
                 }
-            )
+                ResizableDivider(
+                    onDragDp = { deltaDp ->
+                        listPaneWidthDp = (listPaneWidthDp + deltaDp).coerceIn(minListPaneWidthDp, maxListPaneWidthDp)
+                        onListPaneWidthChanged(listPaneWidthDp)
+                    }
+                )
+            }
             Box(modifier = Modifier.weight(1f)) {
                 if (showingEditor) {
-                    editor()
+                    editor(true)
                 } else {
                     Column(
                         modifier = Modifier.fillMaxSize().padding(32.dp),
@@ -268,7 +309,7 @@ fun NotesScreen(
             },
             label = "note-detail-transition"
         ) { showing ->
-            if (showing) editor() else grid(false) { note -> editing = note }
+            if (showing) editor(false) else grid(false) { note -> editing = note }
         }
     }
 }
@@ -339,13 +380,41 @@ private fun NotesGrid(
                         title = "Notes",
                         subtitle = "${notes.size} ${if (notes.size == 1) "note" else "notes"}",
                         modifier = Modifier.weight(1f),
+                        iconContainerColor = AccentYellow.copy(alpha = 0.3f),
+                        iconTint = AccentYellowOn,
                         trailing = {
-                            Row {
-                                IconButton(onClick = { onSearchActiveChanged(true) }) {
-                                    Icon(Icons.Filled.Search, contentDescription = "Search notes")
+                            // Same pill treatment as the editor's own toolbar groups (see
+                            // NoteEditor) rather than two bare icons loose on the header, and
+                            // sized down from the default 48dp touch target so the pair doesn't
+                            // visually outweigh the title next to it. The corner radius is scaled
+                            // down to match — the editor's pills are 16dp corners on a 48dp-tall
+                            // button, and reusing that same 16dp here on a shorter 36dp button
+                            // rounds off proportionally more, reading as a different (more
+                            // "pill-shaped") shape instead of a smaller version of the same one.
+                            Row(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(12.dp))
+                                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                            ) {
+                                IconButton(
+                                    onClick = { onSearchActiveChanged(true) },
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Search,
+                                        contentDescription = "Search notes",
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
-                                IconButton(onClick = onSyncRequested) {
-                                    Icon(Icons.Filled.Sync, contentDescription = "Sync notes with Mac")
+                                IconButton(
+                                    onClick = onSyncRequested,
+                                    modifier = Modifier.size(36.dp)
+                                ) {
+                                    Icon(
+                                        Icons.Filled.Sync,
+                                        contentDescription = "Sync notes with Mac",
+                                        modifier = Modifier.size(18.dp)
+                                    )
                                 }
                             }
                         }
@@ -417,10 +486,11 @@ private fun NotesGrid(
 
 /** A dragged-to-resize divider between the list-detail layout's two panes (see [NotesScreen]) —
  *  a plain [VerticalDivider] with a wider invisible drag target around it (dragging a 1px line
- *  directly is impractical) and [PointerIcon.Companion.Hand] so a mouse/trackpad user gets a
- *  visual cue this is draggable, matching how resizable panes behave on desktop-class Compose
- *  targets. [onDragDp] receives the raw per-event horizontal drag delta already converted to dp;
- *  clamping that against the pane's min/max width is the caller's job. */
+ *  directly is impractical), a small pill-shaped grip centered on it so it's discoverable as
+ *  draggable on first glance rather than only once a mouse happens to hover it, and
+ *  [PointerIcon.Companion.Hand] so a mouse/trackpad user gets that same cue. [onDragDp] receives
+ *  the raw per-event horizontal drag delta already converted to dp; clamping that against the
+ *  pane's min/max width is the caller's job. */
 @Composable
 private fun ResizableDivider(onDragDp: (Float) -> Unit) {
     val density = LocalDensity.current
@@ -437,7 +507,25 @@ private fun ResizableDivider(onDragDp: (Float) -> Unit) {
             },
         contentAlignment = Alignment.Center
     ) {
+        // The line sits centered in this 16dp hit-box, so its left half overlaps the list pane —
+        // left uncolored, that half just showed the page's own (lighter) background instead of
+        // the list's darker surfaceContainer, reading as the list panel stopping short of the
+        // seam. Continuing that color to the line closes the gap.
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .width(8.dp)
+                .fillMaxHeight()
+                .background(MaterialTheme.colorScheme.surfaceContainer)
+        )
         VerticalDivider()
+        Box(
+            modifier = Modifier
+                .width(4.dp)
+                .height(36.dp)
+                .clip(RoundedCornerShape(2.dp))
+                .background(MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f))
+        )
     }
 }
 
@@ -463,9 +551,11 @@ private fun NoteCard(note: NoteEntry, selected: Boolean = false, onClick: () -> 
 
     // `selected` only ever means anything in the expanded list-detail layout (see NotesScreen) —
     // marks which note the detail pane is currently showing, since there's no other visual cue
-    // for that once the grid and the open note are both on screen at once.
+    // for that once the grid and the open note are both on screen at once. Yellow (Notes' own
+    // accent — see the FAB/nav icon), not the app-wide green `primary`: this section reads as one
+    // consistent color scheme rather than mixing in the global accent.
     val cardModifier = if (selected) {
-        Modifier.fillMaxWidth().border(2.dp, MaterialTheme.colorScheme.primary, MaterialTheme.shapes.medium)
+        Modifier.fillMaxWidth().border(2.dp, AccentYellow, MaterialTheme.shapes.medium)
     } else {
         Modifier.fillMaxWidth()
     }
@@ -496,7 +586,7 @@ private fun NoteCard(note: NoteEntry, selected: Boolean = false, onClick: () -> 
                     Icon(
                         Icons.Filled.PushPin,
                         contentDescription = "Pinned",
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = AccentYellow,
                         modifier = Modifier.size(14.dp)
                     )
                 }
@@ -527,7 +617,9 @@ private fun NoteEditor(
     onCancel: () -> Unit,
     onSave: (title: String, body: String) -> Unit,
     onDelete: (() -> Unit)?,
-    onTogglePin: (() -> Unit)?
+    onTogglePin: (() -> Unit)?,
+    isListPaneCollapsed: Boolean = false,
+    onToggleListPaneCollapsed: (() -> Unit)? = null
 ) {
     var title by remember { mutableStateOf(existing?.title ?: "") }
     // The body is a sequence of blocks (see NoteBlocks.kt) rather than a single raw string, so an
@@ -586,43 +678,76 @@ private fun NoteEditor(
     BackHandler(onBack = goBack)
 
     Column(modifier = Modifier.fillMaxSize()) {
-        // One fixed top bar, and the whole thing is the toolbar — Back, formatting buttons, and
-        // Pin/Delete all sit inside the same rounded/filled surface (not a pill of formatting
-        // buttons floating between icons loose on the page background). Always visible here, not
-        // conditional on a block currently being focused, so it reads as a permanent part of the
-        // editor rather than something that only appears once you've already started typing.
-        // Tapping a formatting button before anything is focused starts editing the trailing
-        // block first (see `activeEditingOrStartLast`).
+        // Three distinct pills — Back, formatting, Pin/Delete — rather than one bar spanning the
+        // whole width, matching how a real toolbar (e.g. Notes on the Mac) groups related actions
+        // into separate capsules with visible gaps instead of one continuous surface. Always
+        // visible here, not conditional on a block currently being focused, so it reads as a
+        // permanent part of the editor rather than something that only appears once you've
+        // already started typing. Tapping a formatting button before anything is focused starts
+        // editing the trailing block first (see `activeEditingOrStartLast`).
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 8.dp)
-                .clip(RoundedCornerShape(16.dp))
-                .background(MaterialTheme.colorScheme.surfaceContainerHighest)
-                .padding(horizontal = 4.dp, vertical = 2.dp),
-            verticalAlignment = Alignment.CenterVertically
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            IconButton(onClick = goBack) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+            Box(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+            ) {
+                IconButton(onClick = goBack) {
+                    Icon(Icons.AutoMirrored.Filled.ArrowBack, contentDescription = "Back")
+                }
+            }
+            if (onToggleListPaneCollapsed != null) {
+                // Dragging the divider itself can only give the formatting toolbar so much room
+                // before its own pill runs out of space to scroll in — this is the actual "give
+                // the editor more room" control: it hides the list pane outright rather than
+                // squeezing it, so the toolbar keeps its full working width instead of just a
+                // sliver of it.
+                Box(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                ) {
+                    IconButton(onClick = onToggleListPaneCollapsed) {
+                        Icon(
+                            if (isListPaneCollapsed) Icons.Filled.FullscreenExit else Icons.Filled.Fullscreen,
+                            contentDescription = if (isListPaneCollapsed) "Show note list" else "Hide note list"
+                        )
+                    }
+                }
             }
             NoteFormattingToolbar(
                 editing = editing,
                 onEnsureEditing = { activeEditingOrStartLast() },
                 onChange = { editing = it },
                 onDismissKeyboard = { commitEditing() },
-                modifier = Modifier.weight(1f)
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(16.dp))
+                    .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                    .padding(horizontal = 4.dp, vertical = 2.dp)
             )
-            if (onTogglePin != null) {
-                IconButton(onClick = onTogglePin) {
-                    Icon(
-                        if (existing?.isPinned == true) Icons.Filled.PushPin else Icons.Outlined.PushPin,
-                        contentDescription = if (existing?.isPinned == true) "Unpin" else "Pin"
-                    )
-                }
-            }
-            if (onDelete != null) {
-                IconButton(onClick = { confirmingDelete = true }) {
-                    Icon(Icons.Filled.Delete, contentDescription = "Delete")
+            if (onTogglePin != null || onDelete != null) {
+                Row(
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(16.dp))
+                        .background(MaterialTheme.colorScheme.surfaceContainerHighest)
+                ) {
+                    if (onTogglePin != null) {
+                        IconButton(onClick = onTogglePin) {
+                            Icon(
+                                if (existing?.isPinned == true) Icons.Filled.PushPin else Icons.Outlined.PushPin,
+                                contentDescription = if (existing?.isPinned == true) "Unpin" else "Pin"
+                            )
+                        }
+                    }
+                    if (onDelete != null) {
+                        IconButton(onClick = { confirmingDelete = true }) {
+                            Icon(Icons.Filled.Delete, contentDescription = "Delete")
+                        }
+                    }
                 }
             }
         }
@@ -761,9 +886,11 @@ private fun NoteEditor(
  *  [TextFieldValue]'s embedded spans while still allowing normal typing/selection over them,
  *  unlike a plain-`String`-backed field), paired with [NoteFormattingToolbar] in the top bar (see
  *  [NoteEditor]). A list kind ([EditKind.BULLET_LIST]/[EditKind.NUMBERED_LIST]/[EditKind.TASK_LIST])
- *  shows as one line per item — the bullet/number/checkbox glyphs themselves only reappear once
- *  editing ends and [RichBlockView] takes back over, matching plenty of real note apps that drop
- *  down to plain multi-line text while a list is actively being edited. */
+ *  shows as one line per item, with a live "•"/"1."/"☐" prefix per line via [ListPrefixTransformation]
+ *  so toggling one of those visibly does something immediately — the real bullet/number/checkbox
+ *  glyphs (and, for a checklist, a genuinely tappable box) only reappear once editing ends and
+ *  [RichBlockView] takes back over, but the field no longer looks indistinguishable from plain
+ *  text in the meantime. */
 @Composable
 private fun EditingBlockField(
     editing: EditingBlock,
@@ -776,26 +903,48 @@ private fun EditingBlockField(
     OutlinedTextField(
         value = editing.value,
         onValueChange = { newValue ->
-            // The platform's IME connection can restart and hand back a plain reconstruction of
-            // the current text — same characters, but with any custom AnnotatedString spans
-            // (bold/italic/strike) stripped — typically right after an interaction that shifts
-            // focus away and back (e.g. tapping a formatting-toolbar button while this field stays
-            // logically "the" field being edited). When that happens the text itself hasn't
-            // actually changed, so keep the existing styled AnnotatedString and only take the new
-            // selection/composition from the platform, rather than treating its unstyled text as a
-            // genuine edit and silently destroying whatever formatting was just applied.
-            val isResyncWithoutRealEdit = newValue.text == editing.value.text &&
-                newValue.annotatedString.spanStyles.isEmpty() &&
-                editing.value.annotatedString.spanStyles.isNotEmpty()
-            val effectiveValue = if (isResyncWithoutRealEdit) {
-                TextFieldValue(
-                    annotatedString = editing.value.annotatedString,
-                    selection = newValue.selection,
-                    composition = newValue.composition
-                )
-            } else {
-                newValue
+            // The platform can hand back a plain reconstruction of any part of the text at any
+            // point — same characters, but with custom AnnotatedString spans (bold/italic/strike)
+            // stripped from some or all of it — not just right after a focus change but as a
+            // routine part of how a soft keyboard resends an in-progress composing word on each
+            // keystroke (autocorrect/predictive input). Trusting `newValue.annotatedString`
+            // directly is what caused bold text to revert on the next keystroke, and turning a
+            // mark off to bleed backwards into text already typed: fixed by never trusting the
+            // platform's styling for text that already existed. Diff old vs. new text into a
+            // common prefix/suffix (unchanged, so re-styled verbatim from the OLD annotated
+            // string) and whatever's left in the middle (genuinely new/changed, so built as plain
+            // text and — only this part — stamped with `pendingMarks` if a mark is currently
+            // armed). A pure cursor/selection move with identical text is the prefix-is-everything
+            // case, so this also replaces the old narrower "resync after focus change" guard.
+            val oldText = editing.value.text
+            val newText = newValue.text
+            val maxCommon = minOf(oldText.length, newText.length)
+            var prefixLen = 0
+            while (prefixLen < maxCommon && oldText[prefixLen] == newText[prefixLen]) prefixLen++
+            var suffixLen = 0
+            val maxSuffix = maxCommon - prefixLen
+            while (suffixLen < maxSuffix && oldText[oldText.length - 1 - suffixLen] == newText[newText.length - 1 - suffixLen]) {
+                suffixLen++
             }
+            val middleText = newText.substring(prefixLen, newText.length - suffixLen)
+            val styled = buildAnnotatedString {
+                append(editing.value.annotatedString.subSequence(0, prefixLen))
+                val middleStart = length
+                append(middleText)
+                if (middleText.isNotEmpty() && editing.pendingMarks.isNotEmpty()) {
+                    addStyle(
+                        SpanStyle(
+                            fontWeight = if (EditMark.BOLD in editing.pendingMarks) FontWeight.Bold else null,
+                            fontStyle = if (EditMark.ITALIC in editing.pendingMarks) FontStyle.Italic else null,
+                            textDecoration = if (EditMark.STRIKE in editing.pendingMarks) TextDecoration.LineThrough else null
+                        ),
+                        middleStart,
+                        length
+                    )
+                }
+                append(editing.value.annotatedString.subSequence(oldText.length - suffixLen, oldText.length))
+            }
+            val effectiveValue = TextFieldValue(styled, newValue.selection, newValue.composition)
             val newLineCount = effectiveValue.text.count { it == '\n' } + 1
             val newChecked = if (editing.kind == EditKind.TASK_LIST) {
                 when {
@@ -817,6 +966,14 @@ private fun EditingBlockField(
         } else {
             MaterialTheme.typography.bodyLarge
         },
+        visualTransformation = when (editing.kind) {
+            EditKind.BULLET_LIST -> ListPrefixTransformation { "•  " }
+            EditKind.NUMBERED_LIST -> ListPrefixTransformation { line -> "${line + 1}.  " }
+            EditKind.TASK_LIST -> ListPrefixTransformation { line ->
+                if (editing.taskChecked.getOrElse(line) { false }) "☑  " else "☐  "
+            }
+            EditKind.PARAGRAPH, EditKind.HEADING -> VisualTransformation.None
+        },
         colors = TextFieldDefaults.colors(
             focusedIndicatorColor = Color.Transparent,
             unfocusedIndicatorColor = Color.Transparent,
@@ -827,14 +984,57 @@ private fun EditingBlockField(
     )
 }
 
+/** Renders a "•  "/"1.  "/"☐  " prefix on every line without it actually being part of the
+ *  editable text — [EditingBlock.value] stays plain per-item text (what [commitEditingToBlock]
+ *  reads), while the field visibly reads as a list/checklist while it's being edited instead of
+ *  looking identical to plain paragraph text. [prefixFor] is re-evaluated fresh each recomposition
+ *  (e.g. a checklist's checked glyphs), so this is a plain function, not `remember`ed. */
+private class ListPrefixTransformation(private val prefixFor: (lineIndex: Int) -> String) : VisualTransformation {
+    override fun filter(text: AnnotatedString): TransformedText {
+        val lines = text.text.split("\n")
+        val prefixes = lines.indices.map { prefixFor(it) }
+        val originalLineStarts = IntArray(lines.size)
+        val transformedLineStarts = IntArray(lines.size)
+        var originalPos = 0
+        var transformedPos = 0
+        for (i in lines.indices) {
+            originalLineStarts[i] = originalPos
+            transformedLineStarts[i] = transformedPos
+            originalPos += lines[i].length + 1
+            transformedPos += prefixes[i].length + lines[i].length + 1
+        }
+        val transformed = buildAnnotatedString {
+            lines.forEachIndexed { i, line ->
+                if (i > 0) append("\n")
+                append(prefixes[i])
+                append(text.subSequence(originalLineStarts[i], originalLineStarts[i] + line.length))
+            }
+        }
+        val offsetMapping = object : OffsetMapping {
+            override fun originalToTransformed(offset: Int): Int {
+                val i = (lines.indices).lastOrNull { originalLineStarts[it] <= offset } ?: 0
+                return transformedLineStarts[i] + prefixes[i].length + (offset - originalLineStarts[i])
+            }
+
+            override fun transformedToOriginal(offset: Int): Int {
+                val i = (lines.indices).lastOrNull { transformedLineStarts[it] <= offset } ?: 0
+                val withinLine = (offset - transformedLineStarts[i] - prefixes[i].length).coerceAtLeast(0)
+                return (originalLineStarts[i] + withinLine).coerceAtMost(originalLineStarts[i] + lines[i].length)
+            }
+        }
+        return TransformedText(transformed, offsetMapping)
+    }
+}
+
 /** The formatting toolbar — always visible in [NoteEditor], as its own filled/rounded surface
  *  (not icons sitting directly on the page background), rather than something that only appears
  *  once a block happens to be focused. [editing] is nullable for exactly that reason: nothing may
  *  be focused yet when a button is tapped, in which case [onEnsureEditing] starts an edit session
  *  (on the trailing block — see `activeEditingOrStartLast` in [NoteEditor]) before the action
  *  applies, and every button's active/inactive tint just falls back to "inactive" while nothing is
- *  focused. Bold/Italic/Strikethrough act on the current text selection (a no-op with nothing
- *  selected, same requirement as the desktop toolbar); Heading/Checklist/Bulleted/Numbered switch
+ *  focused. Bold/Italic/Strikethrough act on the current text selection when there is one; with
+ *  nothing selected (just a cursor, or nothing focused at all yet) they arm instead, so whatever's
+ *  typed next picks up the mark — see [applyMarkToggle]. Heading/Checklist/Bulleted/Numbered switch
  *  the whole block's kind, toggling back to a plain paragraph if it's already that kind. The
  *  trailing checkmark dismisses the keyboard/ends the current edit; it's harmless to tap with
  *  nothing focused. */
@@ -849,18 +1049,28 @@ private fun NoteFormattingToolbar(
     fun apply(transform: (EditingBlock) -> EditingBlock) {
         onChange(transform(editing ?: onEnsureEditing()))
     }
-    fun toggleMark(mark: EditMark) = apply {
-        it.copy(value = it.value.copy(annotatedString = toggleMarkInRange(it.value.annotatedString, it.value.selection, mark)))
-    }
+    fun toggleMark(mark: EditMark) = apply { applyMarkToggle(it, mark) }
 
     // No background/clip of its own — the caller's Row (see NoteEditor) is the one distinct
     // surface the whole top bar shares with Back/Pin/Delete, rather than this being a separate
     // pill floating between icons loose on the page background.
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         Row(modifier = Modifier.weight(1f).horizontalScroll(rememberScrollState())) {
-            FormattingToolbarButton(Icons.Filled.FormatBold, "Bold") { toggleMark(EditMark.BOLD) }
-            FormattingToolbarButton(Icons.Filled.FormatItalic, "Italic") { toggleMark(EditMark.ITALIC) }
-            FormattingToolbarButton(Icons.Filled.FormatStrikethrough, "Strikethrough") { toggleMark(EditMark.STRIKE) }
+            FormattingToolbarButton(
+                Icons.Filled.FormatBold,
+                "Bold",
+                active = editing?.let { isMarkActive(it, EditMark.BOLD) } ?: false
+            ) { toggleMark(EditMark.BOLD) }
+            FormattingToolbarButton(
+                Icons.Filled.FormatItalic,
+                "Italic",
+                active = editing?.let { isMarkActive(it, EditMark.ITALIC) } ?: false
+            ) { toggleMark(EditMark.ITALIC) }
+            FormattingToolbarButton(
+                Icons.Filled.FormatStrikethrough,
+                "Strikethrough",
+                active = editing?.let { isMarkActive(it, EditMark.STRIKE) } ?: false
+            ) { toggleMark(EditMark.STRIKE) }
             FormattingToolbarButton(Icons.Filled.Title, "Heading", active = editing?.kind == EditKind.HEADING) {
                 apply { toggleEditKind(it, EditKind.HEADING) }
             }
@@ -890,7 +1100,7 @@ private fun FormattingToolbarButton(icon: ImageVector, label: String, active: Bo
         Icon(
             icon,
             contentDescription = label,
-            tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+            tint = if (active) AccentYellow else MaterialTheme.colorScheme.onSurfaceVariant
         )
     }
 }

@@ -37,15 +37,20 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -171,34 +176,34 @@ fun AppHeader(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     trailing: (@Composable () -> Unit)? = null,
+    iconContainerColor: Color = MaterialTheme.colorScheme.primaryContainer,
+    iconTint: Color = MaterialTheme.colorScheme.onPrimaryContainer,
 ) {
     Row(modifier = modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Box(
             modifier = Modifier
                 .size(40.dp)
                 .clip(CircleShape)
-                .background(MaterialTheme.colorScheme.primaryContainer),
+                .background(iconContainerColor),
             contentAlignment = Alignment.Center,
         ) {
             Icon(
                 leadingIcon,
                 contentDescription = null,
-                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                tint = iconTint,
                 modifier = Modifier.size(20.dp),
             )
         }
         Spacer(Modifier.width(12.dp))
         Column(Modifier.weight(1f)) {
             // A resizable pane (Notes' list-detail list, at its narrowest) can genuinely run out
-            // of room for "Notes" next to the icon and trailing buttons — without this it wraps
-            // to two lines ("Note" / "s") instead of just truncating, which reads as broken rather
-            // than merely narrow.
-            Text(
-                title,
+            // of room for "Notes" next to the icon and trailing buttons — shrinking the font to
+            // fit keeps every character readable rather than ellipsizing part of the word away,
+            // and grows back to full size the moment there's room for it again.
+            AutoSizeText(
+                text = title,
                 style = MaterialTheme.typography.titleLarge,
                 color = MaterialTheme.colorScheme.onSurface,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
             )
             if (subtitle != null) {
                 Text(
@@ -211,6 +216,42 @@ fun AppHeader(
             }
         }
         if (trailing != null) trailing()
+    }
+}
+
+/** A single line of text that shrinks its font size just enough to fit the available width
+ *  instead of wrapping or ellipsizing — every character stays visible, just smaller, and it grows
+ *  back to [style]'s own size the moment there's room for that again. Keyed on [maxWidth] (from
+ *  [BoxWithConstraints]), not just [text], so a *wider* remeasure (e.g. widening [AppHeader]'s
+ *  resizable pane back out) restarts the fit from full size rather than staying shrunk from
+ *  whatever the narrowest point it was ever asked to fit into. Hidden via [drawWithContent] until
+ *  a size is found that fits, so a shrinking-in-front-of-you flicker never shows. */
+@Composable
+private fun AutoSizeText(
+    text: String,
+    style: TextStyle,
+    color: Color,
+    modifier: Modifier = Modifier,
+    minFontSize: androidx.compose.ui.unit.TextUnit = 11.sp,
+) {
+    BoxWithConstraints(modifier = modifier) {
+        var fontSize by remember(text, maxWidth) { mutableStateOf(style.fontSize) }
+        var readyToDraw by remember(text, maxWidth) { mutableStateOf(false) }
+        Text(
+            text,
+            style = style.copy(fontSize = fontSize),
+            color = color,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier.drawWithContent { if (readyToDraw) drawContent() },
+            onTextLayout = { result ->
+                if (result.didOverflowWidth && fontSize > minFontSize) {
+                    fontSize = (fontSize.value * 0.9f).coerceAtLeast(minFontSize.value).sp
+                } else {
+                    readyToDraw = true
+                }
+            }
+        )
     }
 }
 
