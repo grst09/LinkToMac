@@ -474,7 +474,7 @@ class MainActivity : ComponentActivity() {
                 val out = java.io.ByteArrayOutputStream()
                 bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, out)
                 val base64 = Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
-                SyncForegroundService.reportLocalClipboardImage(base64)
+                SyncForegroundService.reportLocalClipboardImage(SyncForegroundService.bitmapPixelHash(bitmap), base64)
             } catch (e: Exception) {
                 android.util.Log.e("MainActivity", "Failed to read clipboard image", e)
             }

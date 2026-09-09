@@ -122,6 +122,14 @@ pub async fn apply_remote_update(state: &Arc<AppState>, text: String) {
 
 /// Same shape as `apply_remote_update`, for an image — see the module doc comment for why
 /// images are PNG over the wire rather than arboard's raw `ImageData`.
+///
+/// Dedups on the *decoded pixel data*, not the PNG bytes: `run_poll_loop` below re-encodes
+/// whatever's on the local clipboard through the `image` crate's own PNG encoder, independent of
+/// whichever encoder the phone used, and that isn't guaranteed to produce byte-identical output
+/// for the same image. Comparing PNG bytes across that round trip caused a continuous phone<->Mac
+/// ping-pong: apply an image from the phone, the poll loop re-encodes it to slightly different PNG
+/// bytes a moment later, sees that as "a new local change" that was never actually made, and
+/// pushes it right back — repeating every second, forever.
 pub async fn apply_remote_image_update(state: &Arc<AppState>, image_base64: String) {
     if !state.settings.lock().await.get().clipboard_sync_enabled {
         return;
@@ -133,22 +141,38 @@ pub async fn apply_remote_image_update(state: &Arc<AppState>, image_base64: Stri
             return;
         }
     };
-    {
-        let mut last = state.clipboard_last_synced_image.lock().await;
-        if last.as_deref() == Some(png_bytes.as_slice()) {
+    let decode_result = tokio::task::spawn_blocking(move || {
+        image::load_from_memory(&png_bytes).map(|img| img.into_rgba8())
+    })
+    .await;
+    let rgba = match decode_result {
+        Ok(Ok(rgba)) => rgba,
+        Ok(Err(e)) => {
+            tracing::warn!("clipboard: failed to decode remote image: {}", e);
             return;
         }
-        *last = Some(png_bytes.clone());
+        Err(e) => {
+            tracing::warn!("clipboard: decode-image task panicked: {}", e);
+            return;
+        }
+    };
+    let (width, height) = rgba.dimensions();
+    let raw_pixels = rgba.into_raw();
+
+    {
+        let mut last = state.clipboard_last_synced_image.lock().await;
+        if last.as_deref() == Some(raw_pixels.as_slice()) {
+            return;
+        }
+        *last = Some(raw_pixels.clone());
     }
     record_history(state, IMAGE_ENTRY_LABEL.to_string(), Some(image_base64), "android").await;
 
     let result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
-        let rgba = image::load_from_memory(&png_bytes)?.into_rgba8();
-        let (width, height) = rgba.dimensions();
         arboard::Clipboard::new()?.set_image(arboard::ImageData {
             width: width as usize,
             height: height as usize,
-            bytes: rgba.into_raw().into(),
+            bytes: raw_pixels.into(),
         })?;
         Ok(())
     })
@@ -205,28 +229,54 @@ pub async fn run_poll_loop(state: Arc<AppState>) {
             }
         }
 
-        let image_result =
-            tokio::task::spawn_blocking(|| -> anyhow::Result<Option<Vec<u8>>> {
+        // Read the clipboard's raw pixels first and dedup on *those* — before paying for a PNG
+        // encode that would just get thrown away on every unchanged tick, and before the dedup
+        // check itself could be defeated by two encodes of the same pixels not being byte-
+        // identical (see `apply_remote_image_update`'s doc comment for why that's not
+        // hypothetical: it's exactly what caused the phone<->Mac ping-pong this replaced).
+        let read_result =
+            tokio::task::spawn_blocking(|| -> anyhow::Result<Option<(u32, u32, Vec<u8>)>> {
                 let image = match arboard::Clipboard::new()?.get_image() {
                     Ok(image) => image,
                     // No image either — not an error worth logging every second.
                     Err(_) => return Ok(None),
                 };
-                let buffer: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(
-                    image.width as u32,
-                    image.height as u32,
-                    image.bytes.into_owned(),
-                )
-                .ok_or_else(|| anyhow::anyhow!("clipboard image had inconsistent dimensions"))?;
-                let mut png_bytes = Vec::new();
-                buffer.write_to(&mut std::io::Cursor::new(&mut png_bytes), ImageFormat::Png)?;
-                Ok(Some(png_bytes))
+                Ok(Some((image.width as u32, image.height as u32, image.bytes.into_owned())))
             })
             .await;
 
-        let png_bytes = match image_result {
-            Ok(Ok(Some(bytes))) => bytes,
+        let (width, height, raw_pixels) = match read_result {
+            Ok(Ok(Some(data))) => data,
             Ok(Ok(None)) => continue,
+            Ok(Err(e)) => {
+                tracing::warn!("clipboard: failed to read local image: {}", e);
+                continue;
+            }
+            Err(e) => {
+                tracing::warn!("clipboard: read-image task panicked: {}", e);
+                continue;
+            }
+        };
+
+        {
+            let mut last = state.clipboard_last_synced_image.lock().await;
+            if last.as_deref() == Some(raw_pixels.as_slice()) {
+                continue;
+            }
+            *last = Some(raw_pixels.clone());
+        }
+
+        let encode_result = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+            let buffer: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(width, height, raw_pixels)
+                .ok_or_else(|| anyhow::anyhow!("clipboard image had inconsistent dimensions"))?;
+            let mut png_bytes = Vec::new();
+            buffer.write_to(&mut std::io::Cursor::new(&mut png_bytes), ImageFormat::Png)?;
+            Ok(png_bytes)
+        })
+        .await;
+
+        let png_bytes = match encode_result {
+            Ok(Ok(bytes)) => bytes,
             Ok(Err(e)) => {
                 tracing::warn!("clipboard: failed to encode local image: {}", e);
                 continue;
@@ -236,14 +286,6 @@ pub async fn run_poll_loop(state: Arc<AppState>) {
                 continue;
             }
         };
-
-        {
-            let mut last = state.clipboard_last_synced_image.lock().await;
-            if last.as_deref() == Some(png_bytes.as_slice()) {
-                continue;
-            }
-            *last = Some(png_bytes.clone());
-        }
         let image_base64 = BASE64.encode(&png_bytes);
         record_history(&state, IMAGE_ENTRY_LABEL.to_string(), Some(image_base64.clone()), "mac").await;
 

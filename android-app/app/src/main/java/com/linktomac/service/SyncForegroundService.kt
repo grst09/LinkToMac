@@ -84,8 +84,15 @@ class SyncForegroundService : Service() {
     private var lastSyncedClipboardText: String? = null
 
     /** Same loop-prevention role as [lastSyncedClipboardText], for images — see
-     *  [applyRemoteClipboardImage]/[reportLocalClipboardImage]. */
-    private var lastSyncedClipboardImageBase64: String? = null
+     *  [applyRemoteClipboardImage]/[reportLocalClipboardImage]. A hash of the *decoded pixel
+     *  data*, not the encoded PNG bytes: the phone's clipboard only exposes images via a
+     *  content:// URI (no raw-bytes API), so an image that originated from the Mac gets read back
+     *  through a decode-then-recompress round trip (MainActivity's `checkClipboard`) that isn't
+     *  guaranteed to reproduce the exact same PNG bytes. Comparing the base64 strings directly
+     *  missed that and looped continuously in practice: apply an image from the Mac, immediately
+     *  "detect" the recompressed copy as a new local change, and send it right back — repeating
+     *  every second, forever. See [bitmapPixelHash]. */
+    private var lastSyncedClipboardImagePixelHash: Long? = null
 
     /** Set by the explicit "Disconnect" action (distinct from [ACTION_FORGET] — the pairing
      *  itself is kept) so the persistent sync notification stays hidden until the user
@@ -518,10 +525,13 @@ class SyncForegroundService : Service() {
      *  ordering as [applyRemoteClipboard]: the guard is updated before the write. */
     private fun applyRemoteClipboardImage(imageBase64: String) {
         if (!appSettingsStore.clipboardSyncEnabled) return
-        if (imageBase64 == lastSyncedClipboardImageBase64) return
-        lastSyncedClipboardImageBase64 = imageBase64
         try {
             val bytes = Base64.decode(imageBase64, Base64.NO_WRAP)
+            val bitmap = android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size) ?: return
+            val hash = bitmapPixelHash(bitmap)
+            if (hash == lastSyncedClipboardImagePixelHash) return
+            lastSyncedClipboardImagePixelHash = hash
+
             val dir = File(cacheDir, "clipboard_images").apply { mkdirs() }
             val file = File(dir, "clip.png")
             FileOutputStream(file).use { it.write(bytes) }
@@ -839,18 +849,32 @@ class SyncForegroundService : Service() {
         }
 
         /** Image counterpart to [reportLocalClipboardText] — same loop-prevention check, against
-         *  the same service instance. `imageBase64` is already PNG-encoded by the caller
-         *  (MainActivity's `checkClipboard`), which is the only place that can actually read the
-         *  clipboard (see that function's doc comment). */
-        fun reportLocalClipboardImage(imageBase64: String) {
+         *  the same service instance, keyed on a hash of the decoded pixel data (see
+         *  [lastSyncedClipboardImagePixelHash]) rather than the base64 string itself. `pixelHash`
+         *  and `imageBase64` are both derived by the caller (MainActivity's `checkClipboard`,
+         *  which is the only place that can actually read the clipboard — see that function's doc
+         *  comment) from the same decoded Bitmap, via [bitmapPixelHash]. */
+        fun reportLocalClipboardImage(pixelHash: Long, imageBase64: String) {
             instance?.let { svc ->
                 if (!svc.appSettingsStore.clipboardSyncEnabled) return
-                if (imageBase64 != svc.lastSyncedClipboardImageBase64) {
-                    svc.lastSyncedClipboardImageBase64 = imageBase64
+                if (pixelHash != svc.lastSyncedClipboardImagePixelHash) {
+                    svc.lastSyncedClipboardImagePixelHash = pixelHash
                     svc.connection.sendClipboardImageUpdate(imageBase64)
                     android.util.Log.d("SyncForegroundService", "clipboard.updateImage sent to Mac")
                 }
             }
+        }
+
+        /** CRC32 of the decoded bitmap's raw pixel buffer — a stable identity for an image across
+         *  a decode/recompress round trip that isn't guaranteed to preserve exact PNG bytes (see
+         *  [lastSyncedClipboardImagePixelHash]). Not cryptographic — a cheap, fast dedup key is
+         *  all this needs; a hash collision just costs one redundant sync, not a correctness bug. */
+        fun bitmapPixelHash(bitmap: android.graphics.Bitmap): Long {
+            val buffer = java.nio.ByteBuffer.allocate(bitmap.byteCount)
+            bitmap.copyPixelsToBuffer(buffer)
+            val crc = java.util.zip.CRC32()
+            crc.update(buffer.array())
+            return crc.value
         }
 
         /** Forces a fresh Bonjour/NSD discovery attempt using the stored pairing credentials —
