@@ -300,10 +300,7 @@ pub async fn begin_pairing(
 fn start_mdns(identity: &IdentityStore) -> Result<ServiceDaemon, Box<dyn std::error::Error>> {
     let daemon = ServiceDaemon::new()?;
 
-    let raw_host = hostname::get()
-        .ok()
-        .and_then(|h| h.into_string().ok())
-        .unwrap_or_else(|| "LinkToMac".to_string());
+    let raw_host = friendly_device_name();
     let dns_safe_host = sanitize_for_dns(&raw_host);
     let host_name = format!("{dns_safe_host}.local.");
 
@@ -339,6 +336,29 @@ fn sanitize_for_dns(name: &str) -> String {
 }
 
 fn local_device_name() -> String {
+    friendly_device_name()
+}
+
+/// The name a person actually gave this Mac (System Settings > General > Sharing > "Computer
+/// Name", e.g. "Ravi's MacBook Pro") — what shows up in Finder, AirDrop, and every other Apple
+/// surface. `hostname::get()` (a thin wrapper over POSIX `gethostname()`) returns something else
+/// entirely: the network/Bonjour *local hostname*, a DNS-safe derivative that's sometimes a
+/// generic network-assigned value (this is what actually produced "Mac.lan" showing up as the
+/// paired device's name on the phone — a real value for this field, just the wrong field). `scutil
+/// --get ComputerName` is the same call Finder/AirDrop themselves use to read it; falls back to
+/// the POSIX hostname on non-macOS platforms or if that command fails for any reason.
+fn friendly_device_name() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        if let Ok(output) = std::process::Command::new("scutil").arg("--get").arg("ComputerName").output() {
+            if output.status.success() {
+                let name = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                if !name.is_empty() {
+                    return name;
+                }
+            }
+        }
+    }
     hostname::get()
         .ok()
         .and_then(|h| h.into_string().ok())
