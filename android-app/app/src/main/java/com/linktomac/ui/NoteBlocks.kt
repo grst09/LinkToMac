@@ -3,6 +3,14 @@ package com.linktomac.ui
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.util.Base64
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontStyle
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.style.TextDecoration
 
 /**
  * Mirrors `desktop-app/src/components/NotesView.tsx`'s block model. The Mac's note editor is a
@@ -465,4 +473,266 @@ private fun unescapeHtml(s: String): String {
             else -> NAMED_ENTITIES[body] ?: m.value
         }
     }
+}
+
+// ---------------------------------------------------------------------------------------------
+// Rich-text editing (formatting toolbar)
+//
+// The block model above is deliberately display/parse-only — [NoteBlock.Rich]'s own doc comment
+// documents the original trade-off of flattening a rich block to plain text on tap rather than
+// building a toolbar. Everything below reverses that: while a block is being edited, its content
+// lives as an [AnnotatedString]-backed [TextFieldValue] (so bold/italic/strike render live, and a
+// toolbar can toggle them on the current selection) instead of a plain [String]. Ending an edit
+// serializes that back to HTML and hands it straight to the existing [parseHtmlNoteBlocks] to
+// rebuild a real [NoteBlock.Rich] — the same "build HTML, then reparse it" pattern [toggleTaskItem]
+// above already uses, so rendering and serialization can never drift out of sync with each other.
+// ---------------------------------------------------------------------------------------------
+
+/** What kind of block is currently being edited. The list kinds hold one item per line of
+ *  [EditingBlock.value] — pressing Enter starts a new item, and clearing a line's text removes
+ *  one — rather than growing separate per-item text fields. */
+enum class EditKind { PARAGRAPH, HEADING, BULLET_LIST, NUMBERED_LIST, TASK_LIST }
+
+/** Transient in-editing state for exactly one block — see the section doc comment above. Never
+ *  persisted or serialized directly; [commitEditingToBlock] converts it back to a real
+ *  [NoteBlock] when editing ends. [taskChecked] only means anything for [EditKind.TASK_LIST], one
+ *  entry per line of [value] — the caller keeps it in sync as lines are added/removed. */
+data class EditingBlock(
+    val blockId: String,
+    val kind: EditKind,
+    val value: TextFieldValue,
+    val taskChecked: List<Boolean> = emptyList()
+)
+
+/** Seeds an [EditingBlock] from whatever's currently in the block — preserving bold/italic/
+ *  strike (unlike the old flatten-to-plain-text tap handler) by converting each run to a real
+ *  [SpanStyle], and joining a list block's items one per line. */
+fun startEditing(block: NoteBlock): EditingBlock = when (block) {
+    is NoteBlock.Text -> EditingBlock(block.id, EditKind.PARAGRAPH, TextFieldValue(AnnotatedString(block.text)))
+    is NoteBlock.Image -> EditingBlock(block.id, EditKind.PARAGRAPH, TextFieldValue(AnnotatedString("")))
+    is NoteBlock.Rich -> when (val display = block.display) {
+        is RichDisplay.Heading ->
+            EditingBlock(block.id, EditKind.HEADING, TextFieldValue(runsToAnnotatedString(display.runs)))
+        is RichDisplay.Paragraph ->
+            EditingBlock(block.id, EditKind.PARAGRAPH, TextFieldValue(runsToAnnotatedString(display.runs)))
+        is RichDisplay.BulletList ->
+            EditingBlock(block.id, EditKind.BULLET_LIST, TextFieldValue(joinRunsLines(display.items)))
+        is RichDisplay.NumberedList ->
+            EditingBlock(block.id, EditKind.NUMBERED_LIST, TextFieldValue(joinRunsLines(display.items)))
+        is RichDisplay.TaskList -> EditingBlock(
+            block.id,
+            EditKind.TASK_LIST,
+            TextFieldValue(joinRunsLines(display.items.map { it.runs })),
+            display.items.map { it.checked }
+        )
+    }
+}
+
+private fun joinRunsLines(items: List<List<InlineRun>>): AnnotatedString = buildAnnotatedString {
+    items.forEachIndexed { index, runs ->
+        if (index > 0) append("\n")
+        append(runsToAnnotatedString(runs))
+    }
+}
+
+/** Same conversion [NotesScreen.kt]'s display-only version does, kept here too so the editing
+ *  code above doesn't depend on a `private` function in another file. */
+fun runsToAnnotatedString(runs: List<InlineRun>): AnnotatedString = buildAnnotatedString {
+    for (run in runs) {
+        val start = length
+        append(run.text)
+        if (run.bold || run.italic || run.strike) {
+            addStyle(
+                SpanStyle(
+                    fontWeight = if (run.bold) FontWeight.Bold else null,
+                    fontStyle = if (run.italic) FontStyle.Italic else null,
+                    textDecoration = if (run.strike) TextDecoration.LineThrough else null
+                ),
+                start,
+                length
+            )
+        }
+    }
+}
+
+/** Ends an edit session, turning [editing] back into a real [NoteBlock] with the same id. Builds
+ *  HTML matching the shapes [parseHtmlNoteBlocks] already understands, then reparses it through
+ *  that same function — see the section doc comment for why. An emptied-out block degrades to a
+ *  plain empty [NoteBlock.Text], since reparsing an empty `<p></p>` on its own yields no blocks at
+ *  all (see [parseHtmlNoteBlocks]'s empty-body guard) — matching how the rest of this file already
+ *  treats an empty paragraph. */
+fun commitEditingToBlock(editing: EditingBlock): NoteBlock {
+    val lines = splitAnnotatedStringLines(editing.value.annotatedString)
+    if (lines.none { it.text.isNotBlank() }) return NoteBlock.Text(editing.blockId, "")
+
+    val html = when (editing.kind) {
+        EditKind.PARAGRAPH -> "<p>${annotatedStringToHtml(lines.first())}</p>"
+        EditKind.HEADING -> "<h1>${annotatedStringToHtml(lines.first())}</h1>"
+        EditKind.BULLET_LIST ->
+            "<ul>" + lines.joinToString("") { "<li><p>${annotatedStringToHtml(it)}</p></li>" } + "</ul>"
+        EditKind.NUMBERED_LIST ->
+            "<ol>" + lines.joinToString("") { "<li><p>${annotatedStringToHtml(it)}</p></li>" } + "</ol>"
+        EditKind.TASK_LIST -> {
+            "<ul data-type=\"taskList\">" + lines.mapIndexed { i, line ->
+                val checked = editing.taskChecked.getOrElse(i) { false }
+                "<li data-checked=\"$checked\"><label><input type=\"checkbox\"${if (checked) " checked" else ""}></label>" +
+                    "<div><p>${annotatedStringToHtml(line)}</p></div></li>"
+            }.joinToString("") + "</ul>"
+        }
+    }
+
+    val reparsed = parseHtmlNoteBlocks(html).firstOrNull() ?: return NoteBlock.Text(editing.blockId, "")
+    return when (reparsed) {
+        is NoteBlock.Rich -> reparsed.copy(id = editing.blockId)
+        is NoteBlock.Text -> reparsed.copy(id = editing.blockId)
+        is NoteBlock.Image -> reparsed
+    }
+}
+
+/** Splits an [AnnotatedString] into per-line [AnnotatedString]s at `\n`, preserving each
+ *  character's [SpanStyle]s — [AnnotatedString] has no built-in line-split that keeps styling, so
+ *  this walks the text manually. */
+private fun splitAnnotatedStringLines(text: AnnotatedString): List<AnnotatedString> {
+    val lines = mutableListOf<AnnotatedString>()
+    var start = 0
+    val full = text.text
+    for (i in full.indices) {
+        if (full[i] == '\n') {
+            lines += text.subSequence(start, i)
+            start = i + 1
+        }
+    }
+    lines += text.subSequence(start, full.length)
+    return lines
+}
+
+/** (bold, italic, strike) in effect at one character index of [text] — spans can overlap, so this
+ *  is an OR across every matching range, not a lookup of a single "the" style. Shared by
+ *  [annotatedStringToHtml] (which reads it) and [toggleMarkInRange] (which needs the same reading
+ *  before it can rebuild the string with one mark flipped). */
+private fun charStyleAt(text: AnnotatedString, index: Int): Triple<Boolean, Boolean, Boolean> {
+    var bold = false
+    var italic = false
+    var strike = false
+    for (range in text.spanStyles) {
+        if (index in range.start until range.end) {
+            if (range.item.fontWeight == FontWeight.Bold) bold = true
+            if (range.item.fontStyle == FontStyle.Italic) italic = true
+            if (range.item.textDecoration == TextDecoration.LineThrough) strike = true
+        }
+    }
+    return Triple(bold, italic, strike)
+}
+
+/** Rebuilds an [AnnotatedString] for [text] from scratch, asking [styleAt] for each character's
+ *  (bold, italic, strike) and merging consecutive identical characters into one [SpanStyle] run.
+ *  Building fresh like this (rather than layering a new span on top of the existing ones) is what
+ *  [toggleMarkInRange] needs to actually *remove* a mark — see its doc comment. */
+private fun rebuildAnnotatedString(text: String, styleAt: (Int) -> Triple<Boolean, Boolean, Boolean>): AnnotatedString =
+    buildAnnotatedString {
+        append(text)
+        if (text.isEmpty()) return@buildAnnotatedString
+        var runStart = 0
+        var current = styleAt(0)
+        fun flush(end: Int) {
+            val (bold, italic, strike) = current
+            if (bold || italic || strike) {
+                addStyle(
+                    SpanStyle(
+                        fontWeight = if (bold) FontWeight.Bold else null,
+                        fontStyle = if (italic) FontStyle.Italic else null,
+                        textDecoration = if (strike) TextDecoration.LineThrough else null
+                    ),
+                    runStart,
+                    end
+                )
+            }
+        }
+        for (i in 1..text.length) {
+            val style = if (i < text.length) styleAt(i) else Triple(false, false, false)
+            if (i == text.length || style != current) {
+                flush(i)
+                runStart = i
+                current = style
+            }
+        }
+    }
+
+/** The inverse of [runsToAnnotatedString] — walks an [AnnotatedString] character by character,
+ *  grouping consecutive characters that share the same bold/italic/strike combination into one
+ *  run, and wraps each run in the matching TipTap-compatible tags. */
+private fun annotatedStringToHtml(text: AnnotatedString): String {
+    if (text.text.isEmpty()) return ""
+    val html = StringBuilder()
+    var runStart = 0
+    var current = charStyleAt(text, 0)
+    fun flush(end: Int) {
+        if (end <= runStart) return
+        var chunk = escapeHtml(text.text.substring(runStart, end))
+        val (bold, italic, strike) = current
+        if (strike) chunk = "<s>$chunk</s>"
+        if (italic) chunk = "<em>$chunk</em>"
+        if (bold) chunk = "<strong>$chunk</strong>"
+        html.append(chunk)
+    }
+    for (i in 1..text.text.length) {
+        val styles = if (i < text.text.length) charStyleAt(text, i) else Triple(false, false, false)
+        if (i == text.text.length || styles != current) {
+            flush(i)
+            runStart = i
+            current = styles
+        }
+    }
+    return html.toString()
+}
+
+/** Which inline mark a formatting-toolbar button toggles. */
+enum class EditMark { BOLD, ITALIC, STRIKE }
+
+/** Toggles one formatting mark across `[range]` of `text` the way a rich-text editor's toolbar
+ *  button normally does: "apply to all" if any character in the range doesn't already have it,
+ *  "remove from all" if every character already does. A no-op for a collapsed (empty) selection —
+ *  there's nothing to apply the mark *to* yet, matching the desktop toolbar's own requirement to
+ *  select text first.
+ *
+ *  [AnnotatedString]'s spans are additive/mergeable but not subtractive — a later span with a
+ *  `null` field doesn't clear an earlier span's non-null value over the same range, it's simply
+ *  silent on that field. So "remove bold from this selection" can't be done by layering one more
+ *  span on top; this rebuilds the whole string's styling from a fresh per-character read instead
+ *  (via [rebuildAnnotatedString]), which is unambiguous either way. */
+fun toggleMarkInRange(text: AnnotatedString, range: TextRange, mark: EditMark): AnnotatedString {
+    if (range.collapsed) return text
+    val chars = text.text.indices.map { charStyleAt(text, it) }
+    fun has(i: Int) = when (mark) {
+        EditMark.BOLD -> chars[i].first
+        EditMark.ITALIC -> chars[i].second
+        EditMark.STRIKE -> chars[i].third
+    }
+    val allSet = (range.min until range.max).all { has(it) }
+    fun updated(i: Int): Triple<Boolean, Boolean, Boolean> {
+        val (bold, italic, strike) = chars[i]
+        if (i !in range.min until range.max) return Triple(bold, italic, strike)
+        return when (mark) {
+            EditMark.BOLD -> Triple(!allSet, italic, strike)
+            EditMark.ITALIC -> Triple(bold, !allSet, strike)
+            EditMark.STRIKE -> Triple(bold, italic, !allSet)
+        }
+    }
+    return rebuildAnnotatedString(text.text, ::updated)
+}
+
+/** Switches [editing] to [target], or back to plain [EditKind.PARAGRAPH] if it's already
+ *  [target] — the same toggle semantics as the desktop toolbar's `toggleHeading`/`toggleBulletList`/
+ *  etc. Resets [EditingBlock.taskChecked] to all-unchecked when switching *into*
+ *  [EditKind.TASK_LIST] (there's no prior per-item checked state to preserve when the block wasn't
+ *  a task list a moment ago); switching away from it just drops the list, same as the others. */
+fun toggleEditKind(editing: EditingBlock, target: EditKind): EditingBlock {
+    val newKind = if (editing.kind == target) EditKind.PARAGRAPH else target
+    val taskChecked = if (newKind == EditKind.TASK_LIST && editing.kind != EditKind.TASK_LIST) {
+        val lineCount = editing.value.text.count { it == '\n' } + 1
+        List(lineCount) { false }
+    } else {
+        editing.taskChecked
+    }
+    return editing.copy(kind = newKind, taskChecked = taskChecked)
 }

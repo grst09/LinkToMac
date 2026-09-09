@@ -32,16 +32,14 @@ import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawingPadding
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.Notes
+import androidx.compose.material.icons.filled.StickyNote2
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.Scaffold
+import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -171,45 +169,39 @@ class MainActivity : ComponentActivity() {
                 // editor, sync options, …) register their own BackHandler further down and take
                 // priority automatically — Compose dispatches to the innermost enabled one first.
                 BackHandler(enabled = selectedTab != 0) { selectedTab = 0 }
-                Scaffold(
-                    bottomBar = {
-                        NavigationBar {
-                            NavigationBarItem(
-                                selected = selectedTab == 0,
-                                onClick = { selectedTab = 0 },
-                                icon = { Icon(Icons.Filled.Smartphone, contentDescription = "Device") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                            NavigationBarItem(
-                                selected = selectedTab == 1,
-                                onClick = { selectedTab = 1 },
-                                icon = { Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = "Notes") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                            NavigationBarItem(
-                                selected = selectedTab == 2,
-                                onClick = { selectedTab = 2 },
-                                icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
-                                colors = NavigationBarItemDefaults.colors(
-                                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            )
-                        }
+                // NavigationSuiteScaffold renders a bottom NavigationBar on a compact window
+                // (the Fold's outer cover screen), and switches to a side NavigationRail once the
+                // window is wide enough (the Fold unfolded) — same three destinations either way,
+                // just picking whichever layout actually fits the current screen instead of a
+                // bottom bar hard-coded for phone-sized windows. See
+                // https://developer.android.com/develop/adaptive-apps/guides/get-started-with-adaptive-apps.
+                // NavigationSuiteScaffold's content slot is a bare `() -> Unit` (no PaddingValues,
+                // unlike the old Scaffold's innerPadding) — with enableEdgeToEdge() drawing behind
+                // the system bars, both the rail/bar and the main content need this explicit inset
+                // themselves or they render straight under the status bar.
+                NavigationSuiteScaffold(
+                    modifier = Modifier.safeDrawingPadding(),
+                    navigationSuiteItems = {
+                        item(
+                            selected = selectedTab == 0,
+                            onClick = { selectedTab = 0 },
+                            icon = { Icon(Icons.Filled.Smartphone, contentDescription = "Device") }
+                        )
+                        item(
+                            selected = selectedTab == 1,
+                            onClick = { selectedTab = 1 },
+                            icon = { Icon(Icons.Filled.StickyNote2, contentDescription = "Notes") }
+                        )
+                        item(
+                            selected = selectedTab == 2,
+                            onClick = { selectedTab = 2 },
+                            icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") }
+                        )
                     }
-                ) { innerPadding ->
+                ) {
                     AnimatedContent(
                         targetState = selectedTab,
-                        modifier = Modifier.fillMaxSize().padding(innerPadding),
+                        modifier = Modifier.fillMaxSize(),
                         transitionSpec = {
                             val direction = if (targetState > initialState) 1 else -1
                             (fadeIn(tween(220)) + slideInHorizontally(tween(220)) { direction * it / 6 })
