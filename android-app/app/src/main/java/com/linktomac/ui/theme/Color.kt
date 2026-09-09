@@ -2,10 +2,11 @@ package com.linktomac.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-// Brand green — the phone shape in the app icon (assets/app-icon/*.svg). Stays fixed across
-// both themes; only the neutrals around it invert, same as the icon itself.
-val LinkGreen = Color(0xFF3DDC84)
-val LinkGreenOn = Color(0xFF0A0A0A)
+// Brand green — matched to the reference icon (a saturated medium green), not Android's own
+// paler mint brand green this replaced. Stays fixed across both themes; only the neutrals around
+// it invert.
+val LinkGreen = Color(0xFF22C55E)
+val LinkGreenOn = Color(0xFFFFFFFF)
 val LinkGreenContainerLight = Color(0xFFB6F2D3)
 val LinkGreenOnContainerLight = Color(0xFF0A3320)
 val LinkGreenContainerDark = Color(0xFF1B4A30)

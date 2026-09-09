@@ -3,8 +3,11 @@ package com.linktomac.ui.components
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.background
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -34,9 +37,11 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
@@ -62,7 +67,7 @@ fun LinkCard(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
-    val elevation = CardDefaults.cardElevation(defaultElevation = 3.dp)
+    val elevation = CardDefaults.cardElevation(defaultElevation = 5.dp, pressedElevation = 2.dp)
     if (onClick != null) {
         Card(
             onClick = onClick,
@@ -83,6 +88,20 @@ fun LinkCard(
     }
 }
 
+/** A small tactile dip while held — every pill button in the app routes through this, so a tap
+ *  anywhere reads as a physical press rather than the flat, instant color-swap Material's default
+ *  ripple gives you on its own. */
+@Composable
+private fun rememberPressScale(interactionSource: MutableInteractionSource): Float {
+    val pressed by interactionSource.collectIsPressedAsState()
+    val scale by animateFloatAsState(
+        targetValue = if (pressed) 0.96f else 1f,
+        animationSpec = spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessLow),
+        label = "buttonPressScale",
+    )
+    return scale
+}
+
 /** Fully-rounded primary action button — the reference design's CTA pill shape. */
 @Composable
 fun PillButton(
@@ -92,12 +111,15 @@ fun PillButton(
     colors: ButtonColors = ButtonDefaults.buttonColors(),
     content: @Composable RowScope.() -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val scale = rememberPressScale(interactionSource)
     Button(
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.scale(scale),
         enabled = enabled,
         shape = RoundedCornerShape(50),
         colors = colors,
+        interactionSource = interactionSource,
         content = content,
     )
 }
@@ -111,12 +133,15 @@ fun PillOutlinedButton(
     colors: ButtonColors = ButtonDefaults.outlinedButtonColors(),
     content: @Composable RowScope.() -> Unit,
 ) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val scale = rememberPressScale(interactionSource)
     OutlinedButton(
         onClick = onClick,
-        modifier = modifier,
+        modifier = modifier.scale(scale),
         enabled = enabled,
         shape = RoundedCornerShape(50),
         colors = colors,
+        interactionSource = interactionSource,
         content = content,
     )
 }

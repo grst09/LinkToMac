@@ -3,6 +3,7 @@ package com.linktomac.ui
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.AnimatedVisibilityScope
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -17,6 +18,7 @@ import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -46,7 +48,6 @@ import androidx.compose.material.icons.filled.Laptop
 import androidx.compose.material.icons.filled.Notifications
 import androidx.compose.material.icons.filled.Photo
 import androidx.compose.material.icons.filled.QrCodeScanner
-import androidx.compose.material.icons.filled.Smartphone
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -66,21 +67,28 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import kotlinx.coroutines.delay
+import com.linktomac.R
 import com.linktomac.net.ConnectionState
 import com.linktomac.service.SyncForegroundService
 import com.linktomac.storage.SyncCategory
-import com.linktomac.ui.components.AppHeader
 import com.linktomac.ui.components.InfoCard
 import com.linktomac.ui.components.LinkCard
 import com.linktomac.ui.components.ListItemCard
 import com.linktomac.ui.components.PillButton
 import com.linktomac.ui.components.PillOutlinedButton
+import com.linktomac.ui.theme.NearBlack
 
 @Composable
 fun PairingScreen(
@@ -135,7 +143,20 @@ fun PairingScreen(
         // recreated later (e.g. after dropping out of the foreground state while disconnected —
         // see SyncForegroundService's notification handling), without needing to notice or
         // re-subscribe when that happens.
-        SyncForegroundService.connectionStateFlow.collect { connectionState = it }
+        SyncForegroundService.connectionStateFlow.collect { newState ->
+            connectionState = newState
+            // `macName` otherwise only re-reads the paired-device store on this screen's
+            // ON_RESUME (see the DisposableEffect below) — a live reconnect that completes while
+            // the screen stays open and foregrounded never fires that, so a Mac's display name
+            // changing (e.g. its Computer Name, or a rename) wouldn't show up here until the next
+            // time the app was backgrounded and reopened. `handleHelloAck` on the Android side
+            // already persists the fresh name to the store the moment a handshake completes, but
+            // this Composable had no way to notice — updating from the same event that store
+            // write reacts to keeps the two in sync immediately instead of on a stale delay.
+            if (newState is ConnectionState.Connected) {
+                macName = newState.macDeviceName
+            }
+        }
     }
 
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -186,64 +207,68 @@ fun PairingScreen(
 
                 Spacer(Modifier.height(24.dp))
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Filled.Laptop, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.width(8.dp))
-                    Text("Paired Device", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
-                    Box(
-                        modifier = Modifier
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primaryContainer)
-                            .padding(horizontal = 10.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            if (paired) "1" else "0",
-                            style = MaterialTheme.typography.labelMedium,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer
-                        )
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-
-                if (paired) {
-                    PairedDeviceRow(
-                        macName = macName ?: "Paired Mac",
-                        connectionState = connectionState,
-                        onReconnect = onReconnect,
-                        onDisconnect = onDisconnect,
-                        onForget = {
-                            paired = false
-                            onForgetDevice()
-                        },
-                        onOpenSyncOptions = { showSyncOptions = true }
-                    )
-                } else {
-                    LinkCard(modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(16.dp)) {
-                            Text(
-                                "No Mac paired yet. Scan a QR code from your Mac to get started.",
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                            if (connectionState is ConnectionState.Failed) {
-                                Spacer(Modifier.height(8.dp))
+                StaggeredEntrance(delayMillis = 90) {
+                    Column {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Filled.Laptop, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                            Spacer(Modifier.width(8.dp))
+                            Text("Paired Device", style = MaterialTheme.typography.titleMedium, modifier = Modifier.weight(1f))
+                            Box(
+                                modifier = Modifier
+                                    .clip(CircleShape)
+                                    .background(MaterialTheme.colorScheme.primaryContainer)
+                                    .padding(horizontal = 10.dp, vertical = 4.dp)
+                            ) {
                                 Text(
-                                    "Couldn't pair: ${(connectionState as ConnectionState.Failed).message}",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.error
+                                    if (paired) "1" else "0",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer
                                 )
-                            } else if (connectionState is ConnectionState.Connecting) {
-                                Spacer(Modifier.height(8.dp))
-                                Row(verticalAlignment = Alignment.CenterVertically) {
-                                    CircularProgressIndicator(modifier = Modifier.size(16.dp))
-                                    Spacer(Modifier.width(8.dp))
-                                    Text("Connecting…", style = MaterialTheme.typography.bodySmall)
-                                }
                             }
-                            Spacer(Modifier.height(12.dp))
-                            PillButton(onClick = onScanRequested) {
-                                Icon(Icons.Filled.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
-                                Spacer(Modifier.width(8.dp))
-                                Text("Scan Pairing Code")
+                        }
+                        Spacer(Modifier.height(12.dp))
+
+                        if (paired) {
+                            PairedDeviceRow(
+                                macName = macName ?: "Paired Mac",
+                                connectionState = connectionState,
+                                onReconnect = onReconnect,
+                                onDisconnect = onDisconnect,
+                                onForget = {
+                                    paired = false
+                                    onForgetDevice()
+                                },
+                                onOpenSyncOptions = { showSyncOptions = true }
+                            )
+                        } else {
+                            LinkCard(modifier = Modifier.fillMaxWidth()) {
+                                Column(Modifier.padding(16.dp)) {
+                                    Text(
+                                        "No Mac paired yet. Scan a QR code from your Mac to get started.",
+                                        style = MaterialTheme.typography.bodyMedium
+                                    )
+                                    if (connectionState is ConnectionState.Failed) {
+                                        Spacer(Modifier.height(8.dp))
+                                        Text(
+                                            "Couldn't pair: ${(connectionState as ConnectionState.Failed).message}",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.error
+                                        )
+                                    } else if (connectionState is ConnectionState.Connecting) {
+                                        Spacer(Modifier.height(8.dp))
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            CircularProgressIndicator(modifier = Modifier.size(16.dp))
+                                            Spacer(Modifier.width(8.dp))
+                                            Text("Connecting…", style = MaterialTheme.typography.bodySmall)
+                                        }
+                                    }
+                                    Spacer(Modifier.height(12.dp))
+                                    PillButton(onClick = onScanRequested) {
+                                        Icon(Icons.Filled.QrCodeScanner, contentDescription = null, modifier = Modifier.size(18.dp))
+                                        Spacer(Modifier.width(8.dp))
+                                        Text("Scan Pairing Code")
+                                    }
+                                }
                             }
                         }
                     }
@@ -252,15 +277,17 @@ fun PairingScreen(
                 val anyPermissionMissing = !notificationAccessGranted || !callsAndMessagesAccessGranted ||
                     !photoAccessGranted || !accessibilityServiceEnabled || !fileAccessGranted
 
-                AnimatedVisibility(visible = anyPermissionMissing) {
+                StaggeredEntrance(delayMillis = 170) {
                     Column {
-                        Spacer(Modifier.height(24.dp))
-                        Text("Setup", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.height(12.dp))
-                    }
-                }
+                        AnimatedVisibility(visible = anyPermissionMissing) {
+                            Column {
+                                Spacer(Modifier.height(24.dp))
+                                Text("Setup", style = MaterialTheme.typography.titleMedium)
+                                Spacer(Modifier.height(12.dp))
+                            }
+                        }
 
-                Column(modifier = Modifier.animateContentSize()) {
+                        Column(modifier = Modifier.animateContentSize()) {
                     PermissionCard(
                         visible = !notificationAccessGranted,
                         icon = Icons.Filled.Notifications,
@@ -318,26 +345,90 @@ fun PairingScreen(
                         actionLabel = "Grant Access",
                         onAction = onRequestFileAccess
                     )
+                        }
+                        Spacer(Modifier.height(8.dp))
+                    }
                 }
-                Spacer(Modifier.height(8.dp))
             }
         }
     }
 }
 
+/** Fades and slides a section up into place, once, the first time this screen composes — used
+ *  for every top-level section (hero, Paired Device, Setup) so the whole screen reads as one
+ *  cascading entrance rather than a single animated hero above a static rest of the page.
+ *  `delayMillis` staggers each section slightly behind the one above it. Runs once per process
+ *  launch, not once per screen visit — this is only ever entered from the Column in
+ *  [PairingScreen], never re-entered while the app stays alive — so flipping between tabs doesn't
+ *  replay it. */
+@Composable
+private fun StaggeredEntrance(delayMillis: Int = 0, content: @Composable AnimatedVisibilityScope.() -> Unit) {
+    var visible by remember { mutableStateOf(false) }
+    LaunchedEffect(Unit) {
+        delay(delayMillis.toLong())
+        visible = true
+    }
+    AnimatedVisibility(
+        visible = visible,
+        enter = fadeIn(tween(500)) + slideInVertically(tween(500)) { it / 4 },
+        content = content,
+    )
+}
+
 @Composable
 private fun HeroCard(paired: Boolean, connectionState: ConnectionState) {
-    // Left-aligned branding header (was centered) — frees vertical space for the real content
-    // below (paired-device card, permission cards) instead of the icon/title eating the top
-    // third of the screen, matching the reference design's compact home-screen header.
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
-        AppHeader(
-            leadingIcon = Icons.Filled.Smartphone,
-            title = "LinkToMac",
-            subtitle = "Mirror notifications, calls, and files with your Mac.",
-        )
-        Spacer(Modifier.height(16.dp))
-        StatusPill(paired = paired, connectionState = connectionState)
+    StaggeredEntrance {
+        // A real tile, matching every other section on this screen (Paired Device, Setup) rather
+        // than sitting loose on the page background — depth here comes from the tile's own
+        // elevation, same as everywhere else, not from a color glow behind the icon.
+        LinkCard(modifier = Modifier.fillMaxWidth()) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+            ) {
+                // The launcher icon is an adaptive-icon (background layer + foreground layer,
+                // composed by the OS at install time) — `painterResource` can't load that XML
+                // format directly ("Only VectorDrawables and rasterized asset types are
+                // supported"), so its two layers are recomposed here by hand: the same solid
+                // background color from ic_launcher_background.xml, with the foreground PNG drawn
+                // over it. The foreground bakes in an adaptive-icon safe-zone inset (content only
+                // fills the center ~66% of the canvas), hence the 1.5x scale to fill this box
+                // edge-to-edge instead of showing that padding as dead space. No color glow behind
+                // it — sitting directly on this tile's own surface is what makes it read as
+                // belonging here rather than floating on a mismatched patch of color.
+                Box(
+                    modifier = Modifier
+                        .size(72.dp)
+                        .shadow(elevation = 8.dp, shape = RoundedCornerShape(22.dp))
+                        .clip(RoundedCornerShape(22.dp))
+                        .background(NearBlack),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Image(
+                        painter = painterResource(R.mipmap.ic_launcher_foreground),
+                        contentDescription = "LinkToMac",
+                        modifier = Modifier.size(72.dp).scale(1.5f),
+                    )
+                }
+                Spacer(Modifier.height(18.dp))
+                Text(
+                    "LinkToMac",
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    "Mirror notifications, calls, and files with your Mac.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                )
+                Spacer(Modifier.height(16.dp))
+                StatusPill(paired = paired, connectionState = connectionState)
+            }
+        }
     }
 }
 
