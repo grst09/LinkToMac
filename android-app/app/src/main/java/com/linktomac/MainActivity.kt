@@ -28,25 +28,33 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawingPadding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.StickyNote2
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.PhoneAndroid
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBarItemDefaults
 import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Surface
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteDefaults
-import androidx.compose.material3.adaptive.navigationsuite.NavigationSuiteScaffold
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
@@ -54,8 +62,12 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.unit.dp
 import androidx.core.view.WindowCompat
 import com.journeyapps.barcodescanner.ScanContract
 import com.linktomac.service.InputInjectionAccessibilityService
@@ -197,23 +209,9 @@ class MainActivity : ComponentActivity() {
                 // FAB, which uses the same yellow. Built outside `navigationSuiteItems` below:
                 // that scope's `item()` calls aren't fully @Composable-scoped, so reading
                 // MaterialTheme.colorScheme directly inside one of them fails to compile.
-                val deviceBarColors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = MaterialTheme.colorScheme.primary,
-                    indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 val deviceRailColors = NavigationRailItemDefaults.colors(
                     selectedIconColor = MaterialTheme.colorScheme.primary,
                     indicatorColor = MaterialTheme.colorScheme.primaryContainer,
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                val deviceItemColors = NavigationSuiteDefaults.itemColors(
-                    navigationBarItemColors = deviceBarColors,
-                    navigationRailItemColors = deviceRailColors
-                )
-                val notesBarColors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = AccentYellowOn,
-                    indicatorColor = AccentYellow.copy(alpha = 0.3f),
                     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 val notesRailColors = NavigationRailItemDefaults.colors(
@@ -221,24 +219,17 @@ class MainActivity : ComponentActivity() {
                     indicatorColor = AccentYellow.copy(alpha = 0.3f),
                     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                val notesItemColors = NavigationSuiteDefaults.itemColors(
-                    navigationBarItemColors = notesBarColors,
-                    navigationRailItemColors = notesRailColors
-                )
-                val settingsBarColors = NavigationBarItemDefaults.colors(
-                    selectedIconColor = AccentViolet,
-                    indicatorColor = AccentViolet.copy(alpha = 0.25f),
-                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
-                )
                 val settingsRailColors = NavigationRailItemDefaults.colors(
                     selectedIconColor = AccentViolet,
                     indicatorColor = AccentViolet.copy(alpha = 0.25f),
                     unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                val settingsItemColors = NavigationSuiteDefaults.itemColors(
-                    navigationBarItemColors = settingsBarColors,
-                    navigationRailItemColors = settingsRailColors
-                )
+                // Same per-tab accents as the rail above, just plain colors — the floating bottom
+                // bar below tints its own icon/label directly rather than through a
+                // NavigationBarItemColors object.
+                val deviceActiveColor = MaterialTheme.colorScheme.primary
+                val notesActiveColor = AccentYellowOn
+                val settingsActiveColor = AccentViolet
                 val tabContent: @Composable () -> Unit = {
                     AnimatedContent(
                         targetState = selectedTab,
@@ -296,13 +287,12 @@ class MainActivity : ComponentActivity() {
                         }
                     }
                 }
-                // NavigationSuiteScaffold's own NavigationRail always packs items against the top
-                // (Material's spec default, and not something the 1.3.1 API we're on exposes a
-                // param to change) — on a rail this is a much longer reach than a phone's bottom
-                // bar ever was, so on a wide window we render the rail ourselves with a weighted
-                // Spacer above and below the items to center them instead, and fall back to
-                // NavigationSuiteScaffold's own bottom NavigationBar unchanged on a compact window
-                // (a horizontal bar has no "center" to reach for in the first place).
+                // Both the rail (wide window) and the bottom bar (compact/phone window) are
+                // hand-built rather than handed to NavigationSuiteScaffold's own item DSL: its
+                // NavigationRail always packs items against the top with no param to center them
+                // (see the Row weighted-Spacer trick below), and its NavigationBar is a plain
+                // edge-to-edge Material bar, not the floating rounded pill the phone layout uses
+                // now — reusing the same per-tab accent colors either way.
                 val useRail = LocalConfiguration.current.screenWidthDp >= 600
                 // Both branches used to take `Modifier.safeDrawingPadding()` on their outermost
                 // element — which, since that element is also the one painting the background
@@ -342,29 +332,32 @@ class MainActivity : ComponentActivity() {
                             Box(modifier = Modifier.weight(1f).safeDrawingPadding()) { tabContent() }
                         }
                     } else {
-                        NavigationSuiteScaffold(
-                            navigationSuiteItems = {
-                                item(
+                        Column(modifier = Modifier.fillMaxSize()) {
+                            Box(modifier = Modifier.weight(1f).safeDrawingPadding()) { tabContent() }
+                            FloatingBottomNavBar {
+                                FloatingNavBarItem(
+                                    icon = Icons.Filled.PhoneAndroid,
+                                    label = "Device",
                                     selected = selectedTab == 0,
-                                    onClick = { selectedTab = 0 },
-                                    icon = { Icon(Icons.Filled.PhoneAndroid, contentDescription = "Device") },
-                                    colors = deviceItemColors
+                                    activeColor = deviceActiveColor,
+                                    onClick = { selectedTab = 0 }
                                 )
-                                item(
+                                FloatingNavBarItem(
+                                    icon = Icons.Filled.StickyNote2,
+                                    label = "Notes",
                                     selected = selectedTab == 1,
-                                    onClick = { selectedTab = 1 },
-                                    icon = { Icon(Icons.Filled.StickyNote2, contentDescription = "Notes") },
-                                    colors = notesItemColors
+                                    activeColor = notesActiveColor,
+                                    onClick = { selectedTab = 1 }
                                 )
-                                item(
+                                FloatingNavBarItem(
+                                    icon = Icons.Filled.Settings,
+                                    label = "Settings",
                                     selected = selectedTab == 2,
-                                    onClick = { selectedTab = 2 },
-                                    icon = { Icon(Icons.Filled.Settings, contentDescription = "Settings") },
-                                    colors = settingsItemColors
+                                    activeColor = settingsActiveColor,
+                                    onClick = { selectedTab = 2 }
                                 )
-                            },
-                            content = { Box(modifier = Modifier.safeDrawingPadding()) { tabContent() } }
-                        )
+                            }
+                        }
                     }
                 }
             }
@@ -603,5 +596,55 @@ class MainActivity : ComponentActivity() {
         const val ACTION_REQUEST_MIRROR_PERMISSION = "com.linktomac.action.REQUEST_MIRROR_PERMISSION"
         const val ACTION_DELETE_PHOTOS = "com.linktomac.action.DELETE_PHOTOS"
         const val EXTRA_PHOTO_IDS = "com.linktomac.extra.PHOTO_IDS"
+    }
+}
+
+/** A floating, pill-shaped bottom nav bar — icon + label per item, rounded corners, a soft
+ *  shadow, and margin on every side — rather than a plain Material bar flush with the screen
+ *  edges. [content] is the row of [FloatingNavBarItem]s. */
+@Composable
+private fun FloatingBottomNavBar(content: @Composable RowScope.() -> Unit) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .navigationBarsPadding()
+            .padding(horizontal = 20.dp, vertical = 12.dp),
+        shape = RoundedCornerShape(28.dp),
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        shadowElevation = 8.dp
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceEvenly,
+            content = content
+        )
+    }
+}
+
+/** One [FloatingBottomNavBar] destination — tints its own icon and label with [activeColor] when
+ *  selected (the same per-tab accent the rail uses), and the theme's muted variant otherwise, no
+ *  separate background chip behind it either way. */
+@Composable
+private fun RowScope.FloatingNavBarItem(
+    icon: ImageVector,
+    label: String,
+    selected: Boolean,
+    activeColor: Color,
+    onClick: () -> Unit
+) {
+    val color = if (selected) activeColor else MaterialTheme.colorScheme.onSurfaceVariant
+    Column(
+        modifier = Modifier
+            .weight(1f)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = onClick
+            ),
+        horizontalAlignment = Alignment.CenterHorizontally
+    ) {
+        Icon(icon, contentDescription = label, tint = color, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.height(2.dp))
+        Text(label, style = MaterialTheme.typography.labelSmall, color = color)
     }
 }
